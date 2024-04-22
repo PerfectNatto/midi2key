@@ -1,0 +1,5 @@
+pywebview
+pygame
+pyautogui
+cefpython3
+pythonnet
