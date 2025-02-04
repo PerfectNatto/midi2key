@@ -1,0 +1,30 @@
+import UIKit
+import CoreML
+
+class ViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        // (1) モデル読み込み
+        // 例: 自動生成されたクラス名が "MyModel" の場合
+        guard let model = try? MyModel(configuration: MLModelConfiguration()) else {
+            print("Model load failed"); return
+        }
+        
+        // (2) 入力生成 (例: shape=[1, 2, 44100], float32 のランダム)
+        let shape: [NSNumber] = [1, 2, 44100]
+        guard let array = try? MLMultiArray(shape: shape, dataType: .float32) else {
+            return
+        }
+        for i in 0..<array.count { array[i] = Float.random(in: -1.0...1.0) as NSNumber }
+        
+        // (3) MyModelInput に詰めて推論
+        // 自動生成ファイルの "Input" のプロパティ名に合わせること
+        let input = MyModelInput(data: array)
+        guard let result = try? model.prediction(input: input) else {
+            print("Prediction failed"); return
+        }
+        
+        print("Prediction result:", result)
+    }
+}
