@@ -144,6 +144,22 @@ def ori_istft_vectorized(z, n_fft, hop_length, window, win_length, normalized=Tr
     # → まず、frames 軸と n_fft 軸を入れ替えて [batch, n_fft, frames]
     x_frames_perm = x_frames.transpose(1, 2)
     batch = x_frames_perm.shape[0]
+
+    expected_blocks = (output_length - n_fft) // hop_length + 1
+
+    # x_frames_perm の frames 次元が expected_blocks と一致していなければ、切り詰めまたはパディングします
+    if frames > expected_blocks:
+        # 多すぎる場合は先頭 expected_blocks 分だけ採用
+        x_frames_perm = x_frames_perm[..., :expected_blocks]
+    elif frames < expected_blocks:
+        # 不足する場合はゼロパディング（右側に）します
+        pad_size = expected_blocks - frames
+        pad_tensor = torch.zeros(batch, n_fft, pad_size, device=z.device, dtype=z.dtype)
+        x_frames_perm = torch.cat([x_frames_perm, pad_tensor], dim=-1)
+
+    # reshape：F.fold の入力は [batch, C * kernel_size, L] となるので、ここでは C = 1, kernel_size = n_fft, L = expected_blocks
+    x_frames_for_fold = x_frames_perm.view(batch, 1 * n_fft, expected_blocks)
+    
     # F.fold は 2D 入力を扱うため、1D 信号は高さ1とみなします。
     # ここで、入力として期待される形は [batch, C * kernel_size, L] です。
     # ここでは、C = 1, kernel_size = n_fft, L = frames
