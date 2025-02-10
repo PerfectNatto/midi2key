@@ -175,3 +175,60 @@ def ori_istft_vectorized(z, n_fft, hop_length, window, win_length, normalized=Tr
     # 指定があれば長さで切り出す
     return x_reconstructed[..., :length] if length is not None else x_reconstructed
 
+import torch
+
+def wiener_filter_no_6d_no_loop(
+    mag_out: torch.Tensor,   # shape: [B, S, C, Fq, T]
+    mix_stft: torch.Tensor,  # shape: [B, C, Fq, T, 2]
+    eps: float = 1e-10
+):
+    """
+    1) B と S をまとめて flatten して最終出力を [B*S, C, Fq, T, 2] とする
+    2) 中間で 6 次元テンソル ([B, S, C, Fq, T, 2]) を作らない
+    3) for 文で S をループしない
+    を満たす実装例．
+    
+    戻り値: shape = [B*S, C, Fq, T, 2]
+    """
+    B, S, C, Fq, T = mag_out.shape
+
+    # --- Step1: Power 計算と Wiener マスク作成 ---
+    # power: [B, S, C, Fq, T]
+    power = mag_out.square()
+
+    # 全ソースのパワーを合計: [B, 1, C, Fq, T]
+    power_sum = power.sum(dim=1, keepdim=True)
+
+    # Wiener マスク（ソースごとのパワー / 合計）
+    # shape: [B, S, C, Fq, T]
+    mask = power / (power_sum + eps)
+
+    # --- Step2: B と S を合体させて flat 化 ---
+    # mask_flat: [B*S, C, Fq, T]
+    mask_flat = mask.reshape(B * S, C, Fq, T)
+
+    # --- Step3: mix_stft を「B 次元を S 回繰り返した」形にする ---
+    # mix_stft: [B, C, Fq, T, 2] なので，
+    # バッチ次元 b ∈ [0..B-1] を，ソース数 S 回ぶん繰り返すために
+    # repeat_interleave や index_select を使う方法がある．
+
+    # ここでは repeat_interleave の例
+    # b_idx: [B*S]  例: B=2, S=3 => b_idx = [0,0,0, 1,1,1]
+    b_idx = torch.arange(B, device=mix_stft.device).repeat_interleave(S)
+
+    # mix_stft_flat: [B*S, C, Fq, T, 2]
+    # インデックス選択で同じバッチ b を S 回ぶん取り出す
+    mix_stft_flat = mix_stft[b_idx, ...]
+    # こうすることで，mask_flat と mix_stft_flat がどちらも
+    # [B*S, C, Fq, T, ...] の形状になり，ソース方向のブロードキャストが可能
+
+    # --- Step4: マスクをかけて分離結果を得る ---
+    # mask_flat:     [B*S, C, Fq, T]
+    # mix_stft_flat: [B*S, C, Fq, T, 2]
+    # unsqueeze(-1) で最後に 1 次元を足して掛け算 => [B*S, C, Fq, T, 2]
+    separated_stft = mask_flat.unsqueeze(-1) * mix_stft_flat
+
+    # shape = [B*S, C, Fq, T, 2]
+    return separated_stft
+
+
