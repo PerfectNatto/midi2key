@@ -231,4 +231,107 @@ def wiener_filter_no_6d_no_loop(
     # shape = [B*S, C, Fq, T, 2]
     return separated_stft
 
+import numpy as np
+
+def idft_frame_no_complex(z_frame, nfft):
+    """
+    半スペクトルから時間領域フレームを計算する関数
+
+    z_frame: shape (freq, 2)
+             ここで freq = nfft/2 + 1 (例: 2049)
+             z_frame[:,0] に実部, z_frame[:,1] に虚部が格納されている
+    nfft: FFT サイズ（例: 4096）
+
+    戻り値:
+      x_frame: 長さ nfft の時間領域フレーム（実数配列）
+    """
+    # nfft が偶数なら、freq = nfft//2 + 1
+    N = nfft
+    freq = z_frame.shape[0]
+    n = np.arange(N)  # n=0,...,N-1
+
+    # DC 成分（k=0）の寄与
+    X0 = z_frame[0, 0]  # 実部のみ
+    # Nyquist 成分（k=N/2）の寄与（実際は理論上実数）
+    X_nyq = z_frame[-1, 0]
+
+    # x[n] の初期化
+    x = np.zeros(N)
+
+    # DC および Nyquist の寄与（それぞれ1倍）
+    x += X0 * np.cos(2 * np.pi * 0 * n / N)  # cos(0) = 1
+    x += X_nyq * np.cos(np.pi * n)            # cos(2π*(N/2)*n/N) = cos(π*n)
+
+    # k = 1 から N/2 - 1 まで
+    for k in range(1, N//2):
+        Re = z_frame[k, 0]
+        Im = z_frame[k, 1]
+        # 各 n に対する cos と sin を計算
+        cos_term = np.cos(2 * np.pi * k * n / N)
+        sin_term = np.sin(2 * np.pi * k * n / N)
+        # 寄与は2倍
+        x += 2 * (Re * cos_term - Im * sin_term)
+    # 正規化（1/N）
+    return x / N
+
+def istft(z, nfft=4096, hop_length=1024, window=None):
+    """
+    入力 z の shape は [batch, freq, frame, 2]
+    freq = nfft//2 + 1, frame はフレーム数、2 は [実部, 虚部]
+    
+    オーバーラップ・アドにより全体の時間領域信号を再構成する。
+
+    Parameters:
+      z         : np.array, shape = [batch, freq, frame, 2]
+      nfft      : FFT サイズ（例: 4096）
+      hop_length: フレーム間シフト（例: 1024）
+      window    : シンセシス窓（1次元配列, 長さ nfft）
+                  None の場合は全て 1 とみなす
+
+    戻り値:
+      x_reconstructed: np.array, shape = [batch, output_length]
+                       ここで output_length = hop_length*(frame-1) + nfft
+    """
+    batch, freq, num_frames, _ = z.shape
+    output_length = hop_length * (num_frames - 1) + nfft
+
+    # シンセシス窓が指定されなければ 1 の窓（矩形窓）
+    if window is None:
+        window = np.ones(nfft)
+    
+    # 出力用配列の初期化
+    x_reconstructed = np.zeros((batch, output_length))
+
+    # 各バッチ、各フレームごとに iDFT を計算してオーバーラップ・アド
+    for b in range(batch):
+        for t in range(num_frames):
+            # z[b, :, t, :] shape = (freq, 2)
+            x_frame = idft_frame_no_complex(z[b, :, t, :], nfft)
+            # 窓を掛ける（分析時と同じ窓またはシンセシス窓）
+            x_frame = x_frame * window
+            start = t * hop_length
+            x_reconstructed[b, start:start+nfft] += x_frame
+    return x_reconstructed
+
+# --- 使用例 ---
+# 仮に nfft=4096, freq=2049, frame=48, batch=32 とする
+nfft = 4096
+freq = nfft//2 + 1  # 2049
+num_frames = 48
+batch = 32
+hop_length = 1024  # 例として
+
+# ダミーの STFT 結果（ランダムな値, 実際はモデル出力など）
+# shape: [batch, freq, frame, 2]
+z = np.random.randn(batch, freq, num_frames, 2)
+
+# 必要に応じてシンセシス窓（ここでは Hann 窓の例）
+window = np.hanning(nfft)
+
+# iSTFT により時間領域信号を再構成
+x_time = istft(z, nfft=nfft, hop_length=hop_length, window=window)
+# x_time の shape は [batch, output_length]
+print(x_time.shape)  # 例: (32, hop_length*(48-1)+4096)
+
+
 
