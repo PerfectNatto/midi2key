@@ -1,3 +1,64 @@
-sudo apt update
-sudo apt install -y build-essential zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libssl-dev libreadline-dev libffi-dev libsqlite3-dev wget libbz2-dev
+package com.example.myapp
+
+import android.os.Bundle
+import android.util.Log
+import androidx.appcompat.app.AppCompatActivity
+import org.pytorch.IValue
+import org.pytorch.LiteModuleLoader
+import org.pytorch.Module
+import org.pytorch.Tensor
+
+class MainActivity : AppCompatActivity() {
+
+    companion object {
+        private const val TAG = "PyTorchMobile"
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        
+        // モデルのロード
+        val model = loadModelFromAssets("model.pt")
+        
+        // 入力データ作成: 形状 [1, 2, 44100]
+        // 例として、全要素を 0.0f としたFloatArrayを用意（実際は音声などのデータに合わせる）
+        val inputShape = longArrayOf(1, 2, 44100)
+        val numElements = inputShape.reduce { acc, l -> acc * l }.toInt()
+        val inputData = FloatArray(numElements) { 0.0f }
+        
+        // 必要に応じて inputData に実際のデータをセットしてください
+        
+        // テンソル作成
+        val inputTensor = Tensor.fromBlob(inputData, inputShape)
+        
+        // 推論実行
+        val outputTensor = model.forward(IValue.from(inputTensor)).toTensor()
+        
+        // 出力結果の一部をログ出力（例として shape と最初の数値を表示）
+        Log.i(TAG, "Output Tensor Shape: ${outputTensor.shape.contentToString()}")
+        val outputData = outputTensor.dataAsFloatArray
+        if (outputData.isNotEmpty()) {
+            Log.i(TAG, "First element of output: ${outputData[0]}")
+        }
+    }
+
+    // assets フォルダからモデルファイルを読み込むヘルパー関数
+    private fun loadModelFromAssets(assetName: String): Module {
+        return LiteModuleLoader.load(assetFilePath(assetName))
+    }
+
+    // assets からファイルパスを取得するユーティリティ関数
+    private fun assetFilePath(assetName: String): String {
+        val file = File(filesDir, assetName)
+        if (!file.exists() || file.length() == 0L) {
+            assets.open(assetName).use { inputStream ->
+                file.outputStream().use { outputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            }
+        }
+        return file.absolutePath
+    }
+}
 
