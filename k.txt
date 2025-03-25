@@ -4,9 +4,9 @@ import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import org.pytorch.IValue
-import org.pytorch.LiteModuleLoader
 import org.pytorch.Module
 import org.pytorch.Tensor
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -18,24 +18,21 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         
-        // モデルのロード
+        // モデルのロード（PyTorch Android 2.1.0 では Module.load を使用）
         val model = loadModelFromAssets("model.pt")
         
         // 入力データ作成: 形状 [1, 2, 44100]
-        // 例として、全要素を 0.0f としたFloatArrayを用意（実際は音声などのデータに合わせる）
         val inputShape = longArrayOf(1, 2, 44100)
         val numElements = inputShape.reduce { acc, l -> acc * l }.toInt()
         val inputData = FloatArray(numElements) { 0.0f }
         
-        // 必要に応じて inputData に実際のデータをセットしてください
-        
-        // テンソル作成
+        // 入力テンソル作成
         val inputTensor = Tensor.fromBlob(inputData, inputShape)
         
         // 推論実行
         val outputTensor = model.forward(IValue.from(inputTensor)).toTensor()
         
-        // 出力結果の一部をログ出力（例として shape と最初の数値を表示）
+        // 出力結果のログ出力（shape と最初の要素）
         Log.i(TAG, "Output Tensor Shape: ${outputTensor.shape.contentToString()}")
         val outputData = outputTensor.dataAsFloatArray
         if (outputData.isNotEmpty()) {
@@ -43,12 +40,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // assets フォルダからモデルファイルを読み込むヘルパー関数
+    // assets からモデルファイルを読み込むヘルパー関数（Module.load を使用）
     private fun loadModelFromAssets(assetName: String): Module {
-        return LiteModuleLoader.load(assetFilePath(assetName))
+        return Module.load(assetFilePath(assetName))
     }
 
-    // assets からファイルパスを取得するユーティリティ関数
+    // assets 内のファイルをファイルシステムにコピーしてパスを取得するユーティリティ関数
     private fun assetFilePath(assetName: String): String {
         val file = File(filesDir, assetName)
         if (!file.exists() || file.length() == 0L) {
@@ -61,4 +58,3 @@ class MainActivity : AppCompatActivity() {
         return file.absolutePath
     }
 }
-
