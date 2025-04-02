@@ -1,60 +1,292 @@
-package com.example.myapp
+package com.example.pytorchwavapp
 
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
-import android.util.Log
+import android.widget.Button
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import org.pytorch.IValue
 import org.pytorch.Module
 import org.pytorch.Tensor
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+// データクラス：WAV ファイルの情報
+data class WavData(
+    val sampleRate: Int,
+    val channels: Int,
+    val bitsPerSample: Int,
+    val pcm: FloatArray // PCM データ（正規化済み Float 値、WAV はチャンネル間インタリーブ）
+)
 
 class MainActivity : AppCompatActivity() {
 
-    companion object {
-        private const val TAG = "PyTorchMobile"
-    }
+    private lateinit var model: Module
+    private val PICK_WAV_FILE_REQUEST = 1001
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // レイアウトにはファイル選択用の Button を配置しておく（例: R.id.btnPickFile）
         setContentView(R.layout.activity_main)
-        
-        // モデルのロード（PyTorch Android 2.1.0 では Module.load を使用）
-        val model = loadModelFromAssets("model.pt")
-        
-        // 入力データ作成: 形状 [1, 2, 44100]
-        val inputShape = longArrayOf(1, 2, 44100)
-        val numElements = inputShape.reduce { acc, l -> acc * l }.toInt()
-        val inputData = FloatArray(numElements) { 0.0f }
-        
-        // 入力テンソル作成
-        val inputTensor = Tensor.fromBlob(inputData, inputShape)
-        
-        // 推論実行
-        val outputTensor = model.forward(IValue.from(inputTensor)).toTensor()
-        
-        // 出力結果のログ出力（shape と最初の要素）
-        Log.i(TAG, "Output Tensor Shape: ${outputTensor.shape.contentToString()}")
-        val outputData = outputTensor.dataAsFloatArray
-        if (outputData.isNotEmpty()) {
-            Log.i(TAG, "First element of output: ${outputData[0]}")
+
+        // ① assets に配置した model.pt を内部ストレージにコピーして読み込み
+        model = loadModel(this)
+
+        // ② ファイル選択ボタンの設定（任意の WAV ファイルをファイルマネージャーから選択）
+        findViewById<Button>(R.id.btnPickFile).setOnClickListener {
+            val intent = Intent(Intent.ACTION_GET_CONTENT)
+            intent.type = "audio/wav"
+            startActivityForResult(intent, PICK_WAV_FILE_REQUEST)
         }
     }
 
-    // assets からモデルファイルを読み込むヘルパー関数（Module.load を使用）
-    private fun loadModelFromAssets(assetName: String): Module {
-        return Module.load(assetFilePath(assetName))
-    }
-
-    // assets 内のファイルをファイルシステムにコピーしてパスを取得するユーティリティ関数
-    private fun assetFilePath(assetName: String): String {
-        val file = File(filesDir, assetName)
-        if (!file.exists() || file.length() == 0L) {
-            assets.open(assetName).use { inputStream ->
-                file.outputStream().use { outputStream ->
-                    inputStream.copyTo(outputStream)
-                }
+    // ファイル選択結果の取得
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == PICK_WAV_FILE_REQUEST && resultCode == Activity.RESULT_OK) {
+            data?.data?.let { uri ->
+                // WAV ファイルの処理は別スレッドで実施
+                Thread {
+                    processSelectedWavFile(uri)
+                }.start()
             }
         }
-        return file.absolutePath
+    }
+
+    // 選択された WAV ファイルの処理
+    private fun processSelectedWavFile(uri: Uri) {
+        try {
+            val inputStream = contentResolver.openInputStream(uri)
+                ?: throw IllegalArgumentException("ファイルが開けません。")
+            // WAV ファイルをパースして PCM データを取得
+            val wavData = readWavFile(inputStream)
+
+            // 本サンプルでは、44100 Hz・2 チャンネルであることを前提とします
+            if (wavData.sampleRate != 44100 || wavData.channels != 2) {
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "このサンプルは 44100Hz 2チャンネル の WAV ファイルのみ対応しています。",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                return
+            }
+
+            // インタリーブされた PCM 配列から左右チャンネルを分離
+            val (leftChannel, rightChannel) = splitChannels(wavData)
+
+            // 1 秒ごと（44100 サンプル）にチャンク処理
+            val chunkSize = wavData.sampleRate // 44100 サンプル
+            val totalFrames = leftChannel.size
+            var offset = 0
+            val outputsList = mutableListOf<FloatArray>()
+            while (offset + chunkSize <= totalFrames) {
+                val leftChunk = leftChannel.copyOfRange(offset, offset + chunkSize)
+                val rightChunk = rightChannel.copyOfRange(offset, offset + chunkSize)
+                // 2 チャンネルのデータを連結（バッチサイズ 1、形状 (1, 2, 44100)）
+                val inputBuffer = FloatArray(2 * chunkSize)
+                for (i in 0 until chunkSize) {
+                    inputBuffer[i] = leftChunk[i]
+                    inputBuffer[i + chunkSize] = rightChunk[i]
+                }
+                val inputTensor = Tensor.fromBlob(inputBuffer, longArrayOf(1, 2, chunkSize.toLong()))
+                val outputTensor = model.forward(IValue.from(inputTensor)).toTensor()
+                val outputData = outputTensor.dataAsFloatArray
+                outputsList.add(outputData)
+                offset += chunkSize
+            }
+            // 全チャンクの出力を結合
+            val outputCombined = outputsList.flatten().toFloatArray()
+
+            // 出力結果を WAV ファイルとして保存（16bit PCM に変換）
+            val outputFile = File(filesDir, "output.wav")
+            saveWavFile(outputCombined, outputFile, wavData.sampleRate, wavData.channels, wavData.bitsPerSample)
+
+            runOnUiThread {
+                Toast.makeText(this, "出力ファイル: ${outputFile.absolutePath}", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            runOnUiThread {
+                Toast.makeText(this, "エラー: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+}
+
+/** ---------------
+ *  以下、各種ヘルパー関数
+ * ---------------
+ */
+
+// assets 内のファイルを内部ストレージへコピーし、モデルを読み込む
+fun assetFilePath(context: android.content.Context, assetName: String): String {
+    val file = File(context.filesDir, assetName)
+    if (!file.exists() || file.length() == 0L) {
+        context.assets.open(assetName).use { inputStream ->
+            FileOutputStream(file).use { outputStream ->
+                inputStream.copyTo(outputStream)
+            }
+        }
+    }
+    return file.absolutePath
+}
+
+fun loadModel(context: android.content.Context): Module {
+    val modelPath = assetFilePath(context, "model.pt")
+    return Module.load(modelPath)
+}
+
+// WAV ファイルを読み込み、ヘッダー情報と正規化済み PCM データ（Float 配列）を返す
+fun readWavFile(inputStream: InputStream): WavData {
+    // 標準的な 44 バイトヘッダーを読む
+    val header = ByteArray(44)
+    val bytesRead = inputStream.read(header, 0, 44)
+    if (bytesRead < 44) {
+        throw IllegalArgumentException("WAV ファイルのヘッダーが不正です。")
+    }
+    // "RIFF" と "WAVE" チェック
+    if (!(header[0] == 'R'.toByte() &&
+          header[1] == 'I'.toByte() &&
+          header[2] == 'F'.toByte() &&
+          header[3] == 'F'.toByte())) {
+        throw IllegalArgumentException("RIFF ヘッダーが不正です。")
+    }
+    if (!(header[8] == 'W'.toByte() &&
+          header[9] == 'A'.toByte() &&
+          header[10] == 'V'.toByte() &&
+          header[11] == 'E'.toByte())) {
+        throw IllegalArgumentException("WAVE ヘッダーが不正です。")
+    }
+
+    val byteBuffer = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+    byteBuffer.position(22)
+    val channels = byteBuffer.short.toInt()
+    val sampleRate = byteBuffer.int
+    byteBuffer.position(34)
+    val bitsPerSample = byteBuffer.short.toInt()
+    byteBuffer.position(40)
+    val dataSize = byteBuffer.int
+
+    // PCM データ読み込み
+    val pcmBytes = ByteArray(dataSize)
+    val totalRead = inputStream.read(pcmBytes)
+    if (totalRead < dataSize) {
+        throw IllegalArgumentException("PCM データが不完全です。")
+    }
+    inputStream.close()
+
+    // 読み込んだ PCM バイト列を FloatArray に変換（16bit, 8bit 対応）
+    val numSamples = dataSize / (bitsPerSample / 8)
+    val pcmFloats = FloatArray(numSamples)
+    val pcmBuffer = ByteBuffer.wrap(pcmBytes).order(ByteOrder.LITTLE_ENDIAN)
+
+    when (bitsPerSample) {
+        16 -> {
+            for (i in 0 until numSamples) {
+                val sample = pcmBuffer.short.toInt()
+                pcmFloats[i] = sample / 32768.0f
+            }
+        }
+        8 -> {
+            for (i in 0 until numSamples) {
+                val sample = pcmBuffer.get().toInt() and 0xFF
+                pcmFloats[i] = (sample - 128) / 128.0f
+            }
+        }
+        else -> {
+            throw UnsupportedOperationException("サポートされていない量子化ビット数: $bitsPerSample")
+        }
+    }
+    return WavData(sampleRate, channels, bitsPerSample, pcmFloats)
+}
+
+// インタリーブされた PCM 配列から左右のチャンネルを分離する（2チャンネルの場合）
+fun splitChannels(wavData: WavData): Pair<FloatArray, FloatArray> {
+    if (wavData.channels != 2) {
+        throw IllegalArgumentException("分離処理はステレオ（2チャンネル）のみ対応しています。")
+    }
+    val totalFrames = wavData.pcm.size / 2
+    val leftChannel = FloatArray(totalFrames)
+    val rightChannel = FloatArray(totalFrames)
+    for (i in 0 until totalFrames) {
+        leftChannel[i] = wavData.pcm[i * 2]
+        rightChannel[i] = wavData.pcm[i * 2 + 1]
+    }
+    return Pair(leftChannel, rightChannel)
+}
+
+// FloatArray（正規化済み PCM データ）を 16bit PCM バイト列へ変換
+fun convertFloatToPCMBytes(floatData: FloatArray, bitsPerSample: Int): ByteArray {
+    return when(bitsPerSample) {
+        16 -> {
+            val pcmBytes = ByteArray(floatData.size * 2)
+            val buffer = ByteBuffer.wrap(pcmBytes).order(ByteOrder.LITTLE_ENDIAN)
+            for (sample in floatData) {
+                val clipped = sample.coerceIn(-1.0f, 1.0f)
+                // 32767 は 16bit PCM の最大値（符号付き）
+                val intSample = (clipped * 32767).toInt()
+                buffer.putShort(intSample.toShort())
+            }
+            pcmBytes
+        }
+        8 -> {
+            val pcmBytes = ByteArray(floatData.size)
+            for (i in floatData.indices) {
+                val clipped = floatData[i].coerceIn(-1.0f, 1.0f)
+                // 8bit PCM は通常 unsigned、中央が 128
+                val intSample = ((clipped + 1.0f) * 127.5f).toInt()
+                pcmBytes[i] = intSample.toByte()
+            }
+            pcmBytes
+        }
+        else -> {
+            throw UnsupportedOperationException("Unsupported bitsPerSample: $bitsPerSample")
+        }
+    }
+}
+
+// WAV ヘッダー作成
+fun createWavHeader(pcmDataSize: Int, sampleRate: Int, channels: Int, bitsPerSample: Int): ByteArray {
+    val header = ByteArray(44)
+    val byteBuffer = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+    byteBuffer.put("RIFF".toByteArray(Charsets.US_ASCII))
+    byteBuffer.putInt(36 + pcmDataSize) // ファイルサイズ - 8
+    byteBuffer.put("WAVE".toByteArray(Charsets.US_ASCII))
+    byteBuffer.put("fmt ".toByteArray(Charsets.US_ASCII))
+    byteBuffer.putInt(16) // サブチャンクサイズ（PCM 固定）
+    byteBuffer.putShort(1.toShort()) // AudioFormat: PCM = 1
+    byteBuffer.putShort(channels.toShort())
+    byteBuffer.putInt(sampleRate)
+    val byteRate = sampleRate * channels * bitsPerSample / 8
+    byteBuffer.putInt(byteRate)
+    val blockAlign = channels * bitsPerSample / 8
+    byteBuffer.putShort(blockAlign.toShort())
+    byteBuffer.putShort(bitsPerSample.toShort())
+    byteBuffer.put("data".toByteArray(Charsets.US_ASCII))
+    byteBuffer.putInt(pcmDataSize)
+    return header
+}
+
+// 出力 PCM データを WAV ファイルとして保存
+fun saveWavFile(
+    floatData: FloatArray,
+    file: File,
+    sampleRate: Int,
+    channels: Int,
+    bitsPerSample: Int
+) {
+    val pcmBytes = convertFloatToPCMBytes(floatData, bitsPerSample)
+    val header = createWavHeader(pcmBytes.size, sampleRate, channels, bitsPerSample)
+    FileOutputStream(file).use { fos ->
+        fos.write(header)
+        fos.write(pcmBytes)
     }
 }
