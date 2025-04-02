@@ -238,3 +238,61 @@ fun convertFloatToPCMBytes(floatData: FloatArray, bitsPerSample: Int): ByteArray
             val pcmBytes = ByteArray(floatData.size * 2)
             val buffer = ByteBuffer.wrap(pcmBytes).order(ByteOrder.LITTLE_ENDIAN)
             for (sample in floatData) {
+                val clipped = sample.coerceIn(-1.0f, 1.0f)
+                val intSample = (clipped * 32767).toInt()
+                buffer.putShort(intSample.toShort())
+            }
+            pcmBytes
+        }
+        8 -> {
+            val pcmBytes = ByteArray(floatData.size)
+            for (i in floatData.indices) {
+                val clipped = floatData[i].coerceIn(-1.0f, 1.0f)
+                val intSample = ((clipped + 1.0f) * 127.5f).toInt()
+                pcmBytes[i] = intSample.toByte()
+            }
+            pcmBytes
+        }
+        else -> {
+            throw UnsupportedOperationException("Unsupported bitsPerSample: $bitsPerSample")
+        }
+    }
+}
+
+// WAV ヘッダーの作成
+fun createWavHeader(pcmDataSize: Int, sampleRate: Int, channels: Int, bitsPerSample: Int): ByteArray {
+    val header = ByteArray(44)
+    val byteBuffer = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+    byteBuffer.put("RIFF".toByteArray(Charsets.US_ASCII))
+    byteBuffer.putInt(36 + pcmDataSize) // ファイルサイズ - 8
+    byteBuffer.put("WAVE".toByteArray(Charsets.US_ASCII))
+    byteBuffer.put("fmt ".toByteArray(Charsets.US_ASCII))
+    byteBuffer.putInt(16) // サブチャンクサイズ（PCM 固定）
+    byteBuffer.putShort(1.toShort()) // AudioFormat: PCM = 1
+    byteBuffer.putShort(channels.toShort())
+    byteBuffer.putInt(sampleRate)
+    val byteRate = sampleRate * channels * bitsPerSample / 8
+    byteBuffer.putInt(byteRate)
+    val blockAlign = channels * bitsPerSample / 8
+    byteBuffer.putShort(blockAlign.toShort())
+    byteBuffer.putShort(bitsPerSample.toShort())
+    byteBuffer.put("data".toByteArray(Charsets.US_ASCII))
+    byteBuffer.putInt(pcmDataSize)
+    return header
+}
+
+// 出力 PCM データを WAV ファイルとして保存
+fun saveWavFile(
+    floatData: FloatArray,
+    file: File,
+    sampleRate: Int,
+    channels: Int,
+    bitsPerSample: Int
+) {
+    val pcmBytes = convertFloatToPCMBytes(floatData, bitsPerSample)
+    val header = createWavHeader(pcmBytes.size, sampleRate, channels, bitsPerSample)
+    FileOutputStream(file).use { fos ->
+        fos.write(header)
+        fos.write(pcmBytes)
+    }
+}
