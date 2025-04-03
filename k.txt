@@ -99,7 +99,30 @@ class MainActivity : AppCompatActivity() {
                 val inputTensor = Tensor.fromBlob(inputBuffer, longArrayOf(1, 2, chunkSize.toLong()))
                 val outputTensor = model.forward(IValue.from(inputTensor)).toTensor()
                 val outputData = outputTensor.dataAsFloatArray
-                outputsList.add(outputData)
+                val shape = outputTensor.shape()
+                if (shape.size == 4 &&
+                    shape[0] == 1L &&
+                    shape[1] == 2L &&
+                    shape[2] == 2L &&
+                    shape[3] == chunkSize.toLong()
+                ) {
+                    // (1,2,2,chunkSize) から e=0 のスライスを取り出し、(1,2,chunkSize) に変換
+                    // 出力全体は 1 * 2 * 2 * chunkSize 個の要素ですが、ここでは各チャンネルごとに
+                    // e=0 の要素のみ（合計 2 * chunkSize 個）を取り出す
+                    val newOutput = FloatArray(2 * chunkSize)
+                    // チャネル 0,1 のそれぞれについて、e=0 の値を取り出す
+                    for (c in 0 until 2) {
+                        for (t in 0 until chunkSize) {
+                            // 元のインデックスは: channel c, extra dimension e=0, 時間 t
+                            // メモリ上の配置は row-major と仮定すると、
+                            // インデックス = c * (2 * chunkSize) + (0 * chunkSize) + t = c * (2 * chunkSize) + t
+                            newOutput[c * chunkSize + t] = outputData[c * (2 * chunkSize) + t]
+                        }
+                    }
+                    outputsList.add(newOutput)
+                } else {
+                    outputsList.add(outputData)
+                }
                 offset += chunkSize
             }
 
