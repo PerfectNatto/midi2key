@@ -1,3 +1,1 @@
-Demucs is a deep learning model for music source separation. It can split a single audio file (e.g., a song) into vocals, drums, bass, and other instruments.
-
-Developed by Facebook AI (Meta AI), it uses a structure similar to U-Net and WaveNet, and processes audio in the time domain rather than the frequency domain. This enables high-quality separation. Newer versions like Hybrid Demucs further improve the performance and accuracy.
+Demucs combines two processing paths: one that performs convolution directly on the raw waveform in the time domain, and another that first converts the signal into the frequency domain (spectrogram) and applies convolution there. The outputs of both paths are then combined.
