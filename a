@@ -1,1 +1,50 @@
-Demucs combines two processing paths: one that performs convolution directly on the raw waveform in the time domain, and another that first converts the signal into the frequency domain (spectrogram) and applies convolution there. The outputs of both paths are then combined.
+public class MainActivity extends AppCompatActivity {
+
+    private static final int REQ_PICK = 1001;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        WebView wv = findViewById(R.id.webview);
+        wv.getSettings().setJavaScriptEnabled(true);
+        wv.addJavascriptInterface(new JSBridge(this), "Android");  // JS から「Android.chooseFile()」
+    }
+
+    /** ファイル選択画面を開く */
+    public void pickFile() {
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("*/*");                               // 画像だけなら "image/*" など
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        startActivityForResult(Intent.createChooser(i, "ファイルを選択"), REQ_PICK);
+    }
+
+    /** 選択結果を受け取る */
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == REQ_PICK && res == RESULT_OK && data != null) {
+            Uri uri = data.getData();                   // これで OK（パスに変換する必要はない）
+            // ↓ C++ に渡すならファイル記述子で
+            try (ParcelFileDescriptor pfd =
+                     getContentResolver().openFileDescriptor(uri, "r")) {
+                nativeInitDecoderFromFd(pfd.getFd());   // ma_decoder_init_fd へ
+            } catch (Exception e) { e.printStackTrace(); }
+        }
+    }
+
+    // JNI 宣言（C++ 実装側で作る）
+    private static native void nativeInitDecoderFromFd(int fd);
+}
+public class JSBridge {
+
+    private final MainActivity act;
+
+    JSBridge(MainActivity a) { this.act = a; }
+
+    @android.webkit.JavascriptInterface
+    public void chooseFile() {          // JS から呼ばれる
+        act.runOnUiThread(() -> act.pickFile());
+    }
+}
