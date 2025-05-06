@@ -1,50 +1,40 @@
-public class MainActivity extends AppCompatActivity {
+import java.io.*;
+import java.nio.charset.StandardCharsets;
 
-    private static final int REQ_PICK = 1001;
+public class WavUtil {
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
+    /** 戻り値: int[0]=channels, int[1]=sampleRate  */
+    public static int[] readWavInfo(String path) throws IOException {
+        try (InputStream in = new FileInputStream(path)) {
+            byte[] b4 = new byte[4];
 
-        WebView wv = findViewById(R.id.webview);
-        wv.getSettings().setJavaScriptEnabled(true);
-        wv.addJavascriptInterface(new JSBridge(this), "Android");  // JS から「Android.chooseFile()」
-    }
+            in.readNBytes(b4, 0, 4);                 // "RIFF"
+            in.skipNBytes(4);                        // ファイルサイズ
+            in.readNBytes(b4, 0, 4);                 // "WAVE"
 
-    /** ファイル選択画面を開く */
-    public void pickFile() {
-        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
-        i.setType("*/*");                               // 画像だけなら "image/*" など
-        i.addCategory(Intent.CATEGORY_OPENABLE);
-        startActivityForResult(Intent.createChooser(i, "ファイルを選択"), REQ_PICK);
-    }
+            while (true) {
+                in.readNBytes(b4, 0, 4);             // chunk ID
+                String id = new String(b4, StandardCharsets.US_ASCII);
 
-    /** 選択結果を受け取る */
-    @Override
-    protected void onActivityResult(int req, int res, Intent data) {
-        super.onActivityResult(req, res, data);
-        if (req == REQ_PICK && res == RESULT_OK && data != null) {
-            Uri uri = data.getData();                   // これで OK（パスに変換する必要はない）
-            // ↓ C++ に渡すならファイル記述子で
-            try (ParcelFileDescriptor pfd =
-                     getContentResolver().openFileDescriptor(uri, "r")) {
-                nativeInitDecoderFromFd(pfd.getFd());   // ma_decoder_init_fd へ
-            } catch (Exception e) { e.printStackTrace(); }
+                in.readNBytes(b4, 0, 4);             // chunk size (LE)
+                int size =  (b4[0] & 0xFF) |
+                           ((b4[1] & 0xFF) << 8) |
+                           ((b4[2] & 0xFF) << 16) |
+                           ((b4[3] & 0xFF) << 24);
+
+                if ("fmt ".equals(id)) {             // 目的のチャンク
+                    byte[] fmt = in.readNBytes(size);      // fmt 本体
+                    int channels = (fmt[2] & 0xFF) | ((fmt[3] & 0xFF) << 8);
+                    int sampleRate = (fmt[4] & 0xFF) |
+                                     ((fmt[5] & 0xFF) << 8) |
+                                     ((fmt[6] & 0xFF) << 16) |
+                                     ((fmt[7] & 0xFF) << 24);
+                    return new int[]{channels, sampleRate};
+                } else {
+                    long skip = size + (size & 1);   // word 対向で偶数境界に揃える
+                    in.skipNBytes(skip);
+                }
+            }
         }
-    }
-
-    // JNI 宣言（C++ 実装側で作る）
-    private static native void nativeInitDecoderFromFd(int fd);
-}
-public class JSBridge {
-
-    private final MainActivity act;
-
-    JSBridge(MainActivity a) { this.act = a; }
-
-    @android.webkit.JavascriptInterface
-    public void chooseFile() {          // JS から呼ばれる
-        act.runOnUiThread(() -> act.pickFile());
     }
 }
