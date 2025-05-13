@@ -1,38 +1,16 @@
-class BufferPump {
-public:
-    using ReadFn  = std::function<size_t(float*, size_t)>;
-    using WriteFn = std::function<void(const float*, size_t)>;
+jobject gHandler = env->NewGlobalRef(handlerObj);
 
-    BufferPump(ReadFn reader,
-               WriteFn writer,
-               size_t  framesPerChunk = 256,
-               size_t  channels       = 2,
-               std::chrono::milliseconds period = std::chrono::milliseconds(10))
-        : mRead(reader), mWrite(writer),
-          mChunk(framesPerChunk), mCh(channels),
-          mBuf(framesPerChunk * channels),
-          mPeriod(period)
-    {
-        mTh = std::thread(&BufferPump::loop, this);
-    }
+    JavaVM* jvm; env->GetJavaVM(&jvm);
 
-    ~BufferPump() { mRun = false; if (mTh.joinable()) mTh.join(); }
-
-private:
-    void loop() {
-        auto next = std::chrono::steady_clock::now();
-        while (mRun) {
-            next += mPeriod;                            // 10 ms 刻み
-            size_t n = mRead(mBuf.data(), mChunk);      // 既存 RB から取得
-            if (n) mWrite(mBuf.data(), n);              // 足りなければ 0 フレームで無音
-            std::this_thread::sleep_until(next);        // 遅れは自然に吸収
+    auto pump = new BufferPump(
+        [=]() {         // 値キャプチャのみ
+            // ★ JVM へアタッチ
+            JNIEnv* e; jvm->AttachCurrentThread(&e, nullptr);
+            // ここで gHandler に対して CallVoidMethod など
+            io.read(frames, dst);
+        },
+        [=]() {
+            JNIEnv* e; jvm->AttachCurrentThread(&e, nullptr);
+            io.write(frames, dst);
         }
-    }
-
-    ReadFn               mRead;   WriteFn            mWrite;
-    const size_t         mChunk, mCh;
-    std::vector<float>   mBuf;
-    std::chrono::milliseconds mPeriod;
-    std::atomic<bool>    mRun{true};
-    std::thread          mTh;
-};
+    );
