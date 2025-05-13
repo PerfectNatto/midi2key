@@ -1,40 +1,38 @@
-import java.io.*;
-import java.nio.charset.StandardCharsets;
+class BufferPump {
+public:
+    using ReadFn  = std::function<size_t(float*, size_t)>;
+    using WriteFn = std::function<void(const float*, size_t)>;
 
-public class WavUtil {
+    BufferPump(ReadFn reader,
+               WriteFn writer,
+               size_t  framesPerChunk = 256,
+               size_t  channels       = 2,
+               std::chrono::milliseconds period = std::chrono::milliseconds(10))
+        : mRead(reader), mWrite(writer),
+          mChunk(framesPerChunk), mCh(channels),
+          mBuf(framesPerChunk * channels),
+          mPeriod(period)
+    {
+        mTh = std::thread(&BufferPump::loop, this);
+    }
 
-    /** 戻り値: int[0]=channels, int[1]=sampleRate  */
-    public static int[] readWavInfo(String path) throws IOException {
-        try (InputStream in = new FileInputStream(path)) {
-            byte[] b4 = new byte[4];
+    ~BufferPump() { mRun = false; if (mTh.joinable()) mTh.join(); }
 
-            in.readNBytes(b4, 0, 4);                 // "RIFF"
-            in.skipNBytes(4);                        // ファイルサイズ
-            in.readNBytes(b4, 0, 4);                 // "WAVE"
-
-            while (true) {
-                in.readNBytes(b4, 0, 4);             // chunk ID
-                String id = new String(b4, StandardCharsets.US_ASCII);
-
-                in.readNBytes(b4, 0, 4);             // chunk size (LE)
-                int size =  (b4[0] & 0xFF) |
-                           ((b4[1] & 0xFF) << 8) |
-                           ((b4[2] & 0xFF) << 16) |
-                           ((b4[3] & 0xFF) << 24);
-
-                if ("fmt ".equals(id)) {             // 目的のチャンク
-                    byte[] fmt = in.readNBytes(size);      // fmt 本体
-                    int channels = (fmt[2] & 0xFF) | ((fmt[3] & 0xFF) << 8);
-                    int sampleRate = (fmt[4] & 0xFF) |
-                                     ((fmt[5] & 0xFF) << 8) |
-                                     ((fmt[6] & 0xFF) << 16) |
-                                     ((fmt[7] & 0xFF) << 24);
-                    return new int[]{channels, sampleRate};
-                } else {
-                    long skip = size + (size & 1);   // word 対向で偶数境界に揃える
-                    in.skipNBytes(skip);
-                }
-            }
+private:
+    void loop() {
+        auto next = std::chrono::steady_clock::now();
+        while (mRun) {
+            next += mPeriod;                            // 10 ms 刻み
+            size_t n = mRead(mBuf.data(), mChunk);      // 既存 RB から取得
+            if (n) mWrite(mBuf.data(), n);              // 足りなければ 0 フレームで無音
+            std::this_thread::sleep_until(next);        // 遅れは自然に吸収
         }
     }
-}
+
+    ReadFn               mRead;   WriteFn            mWrite;
+    const size_t         mChunk, mCh;
+    std::vector<float>   mBuf;
+    std::chrono::milliseconds mPeriod;
+    std::atomic<bool>    mRun{true};
+    std::thread          mTh;
+};
