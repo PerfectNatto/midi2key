@@ -1,23 +1,60 @@
-public void onActivityResumed(final Activity activity) {
-                // DecorView のレイアウト完了を待つ
-                final View decor = activity.getWindow().getDecorView();
-                decor.getViewTreeObserver().addOnGlobalLayoutListener(
-                    new ViewTreeObserver.OnGlobalLayoutListener() {
-                        @Override
-                        public void onGlobalLayout() {
-                            // 一度だけ処理する
-                            decor.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+#include <JuceHeader.h>
 
-                            WebView webView = findWebView(decor);
-                            if (webView != null) {
-                                WebSettings s = webView.getSettings();
-                                s.setAllowFileAccess(true);
-                                s.setAllowFileAccessFromFileURLs(true);
-                                s.setAllowUniversalAccessFromFileURLs(true);
+#if JUCE_ANDROID
+ #include <juce_events/native/juce_android_JNI.h>   // getEnv(), getActivity()
+#endif
 
-                                webView.loadUrl("file:///android_asset/html/index.html");
-                            }
-                        }
-                    }
-                );
-            }
+class MyWebComponent  : public juce::WebBrowserComponent
+{
+public:
+    MyWebComponent()
+      : juce::WebBrowserComponent ("webview", true) // JS 有効化
+    {
+        // 読み込み完了時に呼ばれる
+        setPageFinishedCallback([this](const juce::String& url)
+        {
+            enableFileAccess();
+        });
+
+        goToURL ("file:///android_asset/html/index.html");
+    }
+
+private:
+    void enableFileAccess()
+    {
+   #if JUCE_ANDROID
+        // 1) ピアを取得し、AndroidViewComponent にキャスト
+        auto* peer = getPeer();
+        auto* androidPeer = dynamic_cast<juce::AndroidViewComponent*> (peer);
+        if (androidPeer == nullptr)
+            return;
+
+        // 2) void* で返ってくる View を JNI jobject にキャスト
+        jobject view = static_cast<jobject> (androidPeer->getView());
+        if (view == nullptr)
+            return;
+
+        // 3) JNI 環境を取得
+        JNIEnv* env = juce::getEnv();
+        jclass viewClass = env->GetObjectClass (view);
+
+        // 4) getSettings() を呼び出して WebSettings オブジェクトを取得
+        jmethodID midGetSettings = env->GetMethodID (viewClass,
+                                                     "getSettings",
+                                                     "()Landroid/webkit/WebSettings;");
+        jobject settings = env->CallObjectMethod (view, midGetSettings);
+
+        // 5) WebSettings#setAllow... 系をまとめて呼ぶ
+        jclass settingsClass = env->GetObjectClass (settings);
+        auto callBoolMethod = [&](const char* name)
+        {
+            auto mid = env->GetMethodID (settingsClass, name, "(Z)V");
+            env->CallVoidMethod (settings, mid, JNI_TRUE);
+        };
+
+        callBoolMethod ("setAllowFileAccess");
+        callBoolMethod ("setAllowFileAccessFromFileURLs");
+        callBoolMethod ("setAllowUniversalAccessFromFileURLs");
+   #endif
+    }
+};
