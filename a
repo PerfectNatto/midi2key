@@ -1,31 +1,54 @@
-import os
-import boto3
-from tqdm import tqdm
+#include <JuceHeader.h>
+#if JUCE_ANDROID
+ #include <android/asset_manager.h>
+ #include <android/asset_manager_jni.h>
+#endif
 
-def upload_folder_to_s3_with_progress(local_folder: str, bucket_name: str, s3_prefix: str = ""):
-    """
-    local_folder: ローカルのフォルダパス
-    bucket_name: アップロード先の S3 バケット名
-    s3_prefix:   バケット内のプレフィックス (末尾スラッシュ不要)
-    """
-    s3 = boto3.client('s3')
+class MainComponent  : public juce::Component
+{
+public:
+    MainComponent()
+    {
+        webView = std::make_unique<juce::WebBrowserComponent>("webview", true);
+        addAndMakeVisible(*webView);
+        loadAssetHtml();
+        setSize (800, 600);
+    }
 
-    # 1. アップロード対象のファイルリストを作成
-    files_to_upload = []
-    for root, _, files in os.walk(local_folder):
-        for fname in files:
-            local_path = os.path.join(root, fname)
-            rel_path = os.path.relpath(local_path, local_folder).replace("\\", "/")
-            s3_key = f"{s3_prefix}/{rel_path}" if s3_prefix else rel_path
-            files_to_upload.append((local_path, s3_key))
+    void resized() override
+    {
+        webView->setBounds (getLocalBounds());
+    }
 
-    # 2. tqdm でファイル数ベースのプログレスバーを表示しつつアップロード
-    for local_path, s3_key in tqdm(files_to_upload, desc="Uploading to S3", unit="file"):
-        s3.upload_file(local_path, bucket_name, s3_key)
+private:
+    std::unique_ptr<juce::WebBrowserComponent> webView;
 
-if __name__ == "__main__":
-    upload_folder_to_s3_with_progress(
-        local_folder="/path/to/myfolder",
-        bucket_name="your-bucket-name",
-        s3_prefix="optional/subfolder"
-    )
+    void loadAssetHtml()
+    {
+   #if JUCE_ANDROID
+        // JNI 経由で AAssetManager を取得
+        auto* env = juce::getEnv();
+        auto activity = juce::getAppActivity();
+        AAssetManager* mgr = AAssetManager_fromJava (env, activity);
+
+        // assets/html/index.html を開く
+        AAsset* asset = AAssetManager_open (mgr, "html/index.html", AASSET_MODE_BUFFER);
+        if (asset != nullptr)
+        {
+            size_t size = static_cast<size_t>(AAsset_getLength(asset));
+            juce::HeapBlock<char> buffer ((int)size + 1);
+            AAsset_read(asset, buffer, size);
+            buffer[size] = '\0';
+            AAsset_close(asset);
+
+            // HTML をロード
+            webView->loadHTML (juce::String (buffer),
+                               juce::URL ("file:///android_asset/html/"));
+            return;
+        }
+   #endif
+        DBG("assets/html/index.html が見つかりません");
+    }
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
+};
