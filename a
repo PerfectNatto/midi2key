@@ -1,54 +1,23 @@
-#include <JuceHeader.h>
-#if JUCE_ANDROID
- #include <android/asset_manager.h>
- #include <android/asset_manager_jni.h>
-#endif
+public void onActivityResumed(final Activity activity) {
+                // DecorView のレイアウト完了を待つ
+                final View decor = activity.getWindow().getDecorView();
+                decor.getViewTreeObserver().addOnGlobalLayoutListener(
+                    new ViewTreeObserver.OnGlobalLayoutListener() {
+                        @Override
+                        public void onGlobalLayout() {
+                            // 一度だけ処理する
+                            decor.getViewTreeObserver().removeOnGlobalLayoutListener(this);
 
-class MainComponent  : public juce::Component
-{
-public:
-    MainComponent()
-    {
-        webView = std::make_unique<juce::WebBrowserComponent>("webview", true);
-        addAndMakeVisible(*webView);
-        loadAssetHtml();
-        setSize (800, 600);
-    }
+                            WebView webView = findWebView(decor);
+                            if (webView != null) {
+                                WebSettings s = webView.getSettings();
+                                s.setAllowFileAccess(true);
+                                s.setAllowFileAccessFromFileURLs(true);
+                                s.setAllowUniversalAccessFromFileURLs(true);
 
-    void resized() override
-    {
-        webView->setBounds (getLocalBounds());
-    }
-
-private:
-    std::unique_ptr<juce::WebBrowserComponent> webView;
-
-    void loadAssetHtml()
-    {
-   #if JUCE_ANDROID
-        // JNI 経由で AAssetManager を取得
-        auto* env = juce::getEnv();
-        auto activity = juce::getAppActivity();
-        AAssetManager* mgr = AAssetManager_fromJava (env, activity);
-
-        // assets/html/index.html を開く
-        AAsset* asset = AAssetManager_open (mgr, "html/index.html", AASSET_MODE_BUFFER);
-        if (asset != nullptr)
-        {
-            size_t size = static_cast<size_t>(AAsset_getLength(asset));
-            juce::HeapBlock<char> buffer ((int)size + 1);
-            AAsset_read(asset, buffer, size);
-            buffer[size] = '\0';
-            AAsset_close(asset);
-
-            // HTML をロード
-            webView->loadHTML (juce::String (buffer),
-                               juce::URL ("file:///android_asset/html/"));
-            return;
-        }
-   #endif
-        DBG("assets/html/index.html が見つかりません");
-    }
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
-};
+                                webView.loadUrl("file:///android_asset/html/index.html");
+                            }
+                        }
+                    }
+                );
+            }
