@@ -1,60 +1,70 @@
-#include <JuceHeader.h>
+#include "MainComponent.h"
 
-#if JUCE_ANDROID
- #include <juce_events/native/juce_android_JNI.h>   // getEnv(), getActivity()
-#endif
+using namespace juce;
 
-class MyWebComponent  : public juce::WebBrowserComponent
+namespace
 {
-public:
-    MyWebComponent()
-      : juce::WebBrowserComponent ("webview", true) // JS 有効化
+    // 簡易 MIME 判定（拡張子だけで十分ならこれで可）
+    String mimeFromExtension (String ext)
     {
-        // 読み込み完了時に呼ばれる
-        setPageFinishedCallback([this](const juce::String& url)
-        {
-            enableFileAccess();
-        });
-
-        goToURL ("file:///android_asset/html/index.html");
+        ext = ext.toLowerCase();
+        if (ext == ".html" || ext == ".htm")  return "text/html";
+        if (ext == ".css")                    return "text/css";
+        if (ext == ".js")                     return "text/javascript";
+        if (ext == ".png")                    return "image/png";
+        if (ext == ".jpg" || ext == ".jpeg")  return "image/jpeg";
+        if (ext == ".svg")                    return "image/svg+xml";
+        return "application/octet-stream";
     }
 
-private:
-    void enableFileAccess()
+    // バンドル内 www フォルダへの絶対パス
+    File pathInBundle (String relativePath)
     {
-   #if JUCE_ANDROID
-        // 1) ピアを取得し、AndroidViewComponent にキャスト
-        auto* peer = getPeer();
-        auto* androidPeer = dynamic_cast<juce::AndroidViewComponent*> (peer);
-        if (androidPeer == nullptr)
-            return;
+        // 実行バイナリ → .app → www
+        auto www = File::getSpecialLocation (File::currentExecutableFile)
+                     .getParentDirectory()
+                     .getChildFile ("www");
+        return www.getChildFile (relativePath.removeCharacters ("\\/"));
+    }
+}
 
-        // 2) void* で返ってくる View を JNI jobject にキャスト
-        jobject view = static_cast<jobject> (androidPeer->getView());
-        if (view == nullptr)
-            return;
+MainComponent::MainComponent()
+{
+    // -------- ResourceProvider をラムダで実装 ----------
+    auto provider = [] (const String& requestPath)
+        -> std::optional<WebBrowserComponent::Resource>
+    {
+        // 先頭の '/' を削る
+        auto rel = requestPath.trimCharactersAtStart ("/");
+        if (rel.isEmpty())
+            rel = "index.html";
 
-        // 3) JNI 環境を取得
-        JNIEnv* env = juce::getEnv();
-        jclass viewClass = env->GetObjectClass (view);
+        auto file = pathInBundle (rel);
+        if (! file.existsAsFile())
+            return std::nullopt;                      // 404
 
-        // 4) getSettings() を呼び出して WebSettings オブジェクトを取得
-        jmethodID midGetSettings = env->GetMethodID (viewClass,
-                                                     "getSettings",
-                                                     "()Landroid/webkit/WebSettings;");
-        jobject settings = env->CallObjectMethod (view, midGetSettings);
+        MemoryBlock data;
+        if (! file.loadFileAsData (data))
+            return std::nullopt;                      // 読み込み失敗
 
-        // 5) WebSettings#setAllow... 系をまとめて呼ぶ
-        jclass settingsClass = env->GetObjectClass (settings);
-        auto callBoolMethod = [&](const char* name)
+        return WebBrowserComponent::Resource
         {
-            auto mid = env->GetMethodID (settingsClass, name, "(Z)V");
-            env->CallVoidMethod (settings, mid, JNI_TRUE);
+            mimeFromExtension (file.getFileExtension()),
+            std::move (data)
         };
+    };
 
-        callBoolMethod ("setAllowFileAccess");
-        callBoolMethod ("setAllowFileAccessFromFileURLs");
-        callBoolMethod ("setAllowUniversalAccessFromFileURLs");
-   #endif
-    }
-};
+    auto opts = WebBrowserComponent::Options{}
+                    .withResourceProvider (std::move (provider));
+
+    browser_ = std::make_unique<WebBrowserComponent> (opts);
+    addAndMakeVisible (*browser_);
+
+    // "/" → provider が index.html を返す
+    browser_->goToURL (WebBrowserComponent::getResourceProviderRoot());
+}
+
+void MainComponent::resized()
+{
+    browser_->setBounds (getLocalBounds());
+}
