@@ -1,70 +1,9 @@
-#include "MainComponent.h"
+webView.get().translatesAutoresizingMaskIntoConstraints = NO;
+UILayoutGuide* guide = [view get].safeAreaLayoutGuide;
 
-using namespace juce;
-
-namespace
-{
-    // 簡易 MIME 判定（拡張子だけで十分ならこれで可）
-    String mimeFromExtension (String ext)
-    {
-        ext = ext.toLowerCase();
-        if (ext == ".html" || ext == ".htm")  return "text/html";
-        if (ext == ".css")                    return "text/css";
-        if (ext == ".js")                     return "text/javascript";
-        if (ext == ".png")                    return "image/png";
-        if (ext == ".jpg" || ext == ".jpeg")  return "image/jpeg";
-        if (ext == ".svg")                    return "image/svg+xml";
-        return "application/octet-stream";
-    }
-
-    // バンドル内 www フォルダへの絶対パス
-    File pathInBundle (String relativePath)
-    {
-        // 実行バイナリ → .app → www
-        auto www = File::getSpecialLocation (File::currentExecutableFile)
-                     .getParentDirectory()
-                     .getChildFile ("www");
-        return www.getChildFile (relativePath.removeCharacters ("\\/"));
-    }
-}
-
-MainComponent::MainComponent()
-{
-    // -------- ResourceProvider をラムダで実装 ----------
-    auto provider = [] (const String& requestPath)
-        -> std::optional<WebBrowserComponent::Resource>
-    {
-        // 先頭の '/' を削る
-        auto rel = requestPath.trimCharactersAtStart ("/");
-        if (rel.isEmpty())
-            rel = "index.html";
-
-        auto file = pathInBundle (rel);
-        if (! file.existsAsFile())
-            return std::nullopt;                      // 404
-
-        MemoryBlock data;
-        if (! file.loadFileAsData (data))
-            return std::nullopt;                      // 読み込み失敗
-
-        return WebBrowserComponent::Resource
-        {
-            mimeFromExtension (file.getFileExtension()),
-            std::move (data)
-        };
-    };
-
-    auto opts = WebBrowserComponent::Options{}
-                    .withResourceProvider (std::move (provider));
-
-    browser_ = std::make_unique<WebBrowserComponent> (opts);
-    addAndMakeVisible (*browser_);
-
-    // "/" → provider が index.html を返す
-    browser_->goToURL (WebBrowserComponent::getResourceProviderRoot());
-}
-
-void MainComponent::resized()
-{
-    browser_->setBounds (getLocalBounds());
-}
+[NSLayoutConstraint activateConstraints:@[
+    [webView.get().leadingAnchor constraintEqualToAnchor:guide.leadingAnchor],
+    [webView.get().trailingAnchor constraintEqualToAnchor:guide.trailingAnchor],
+    [webView.get().topAnchor constraintEqualToAnchor:guide.topAnchor],
+    [webView.get().bottomAnchor constraintEqualToAnchor:guide.bottomAnchor]
+]];
