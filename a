@@ -1,133 +1,29 @@
-// server.js
+import boto3
+from tqdm import tqdm
 
-const http = require('http');
-const WebSocket = require('ws');
+class ProgressPercentage:
+    def __init__(self, bucket: str, key: str):
+        s3 = boto3.client('s3')
+        size = s3.head_object(Bucket=bucket, Key=key)['ContentLength']
+        self._bar = tqdm(total=size, unit='B', unit_scale=True, desc=key.split('/')[-1])
 
-// 1) HTTP サーバーを立ち上げ（必要に応じて Express などに置き換えてもOK）
-const server = http.createServer((req, res) => {
-  // WebSocket サーバー専用のため、通常の HTTP リクエストには 404 を返す
-  res.writeHead(404);
-  res.end();
-});
+    def __call__(self, bytes_amount):
+        self._bar.update(bytes_amount)
 
-// 2) WebSocket サーバーを HTTP サーバーに紐づけ
-const wss = new WebSocket.Server({ server });
+    def close(self):
+        self._bar.close()
 
-// 3) クライアントから接続があったときの処理
-wss.on('connection', (ws, req) => {
-  console.log('クライアントが接続しました');
+def download_with_tqdm(bucket: str, key: str, dest: str):
+    s3 = boto3.client('s3')
+    prog = ProgressPercentage(bucket, key)
+    try:
+        s3.download_file(Bucket=bucket, Key=key, Filename=dest, Callback=prog)
+    finally:
+        prog.close()
 
-  // 3-1) クライアントからメッセージを受け取ったとき
-  ws.on('message', (message) => {
-    console.log(`クライアントからのメッセージ: ${message}`);
-
-    // 例として、受け取ったメッセージをそのまま返す（エコー）
-    ws.send(`サーバーからの返信: ${message}`);
-  });
-
-  // 3-2) 接続が切断されたとき
-  ws.on('close', () => {
-    console.log('クライアントの接続が切れました');
-  });
-
-  // 3-3) エラーが発生したとき
-  ws.on('error', (err) => {
-    console.error('WebSocket エラー:', err);
-  });
-
-  // 接続直後にクライアントへウェルカムメッセージを送信
-  ws.send('サーバー：接続ありがとうございます！');
-});
-
-// 4) HTTP サーバーをポート 8080 で起動
-const PORT = 8080;
-server.listen(PORT, () => {
-  console.log(`WebSocket サーバーが起動しました → ws://localhost:${PORT}`);
-});
-
-
-
-
-
-
-
-
-
-
-
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WebSocket クライアント</title>
-</head>
-<body>
-  <h2>WebSocket クライアントデモ</h2>
-  <div id="status">接続状態：未接続</div>
-  <button id="connectBtn">サーバーに接続</button>
-  <button id="sendBtn" disabled>メッセージ送信</button>
-  <div>
-    <input type="text" id="messageInput" placeholder="送信したいメッセージ" />
-  </div>
-  <pre id="log"></pre>
-
-  <script>
-    const statusEl = document.getElementById('status');
-    const connectBtn = document.getElementById('connectBtn');
-    const sendBtn = document.getElementById('sendBtn');
-    const messageInput = document.getElementById('messageInput');
-    const logEl = document.getElementById('log');
-
-    let socket = null;
-
-    // サーバーへ接続するボタンをクリックしたときの処理
-    connectBtn.addEventListener('click', () => {
-      // 既に接続していれば何もしない
-      if (socket && socket.readyState === WebSocket.OPEN) return;
-
-      // WebSocket オブジェクトを生成
-      socket = new WebSocket('ws://localhost:8080');
-
-      // 接続が確立したとき
-      socket.addEventListener('open', () => {
-        statusEl.textContent = '接続状態：接続中（OPEN）';
-        sendBtn.disabled = false;
-        appendLog('[システム] サーバーと接続しました');
-      });
-
-      // サーバーからメッセージを受信したとき
-      socket.addEventListener('message', (event) => {
-        appendLog(`[サーバー] ${event.data}`);
-      });
-
-      // 切断されたとき
-      socket.addEventListener('close', () => {
-        statusEl.textContent = '接続状態：切断（CLOSED）';
-        sendBtn.disabled = true;
-        appendLog('[システム] 接続が切断されました');
-      });
-
-      // エラーが発生したとき
-      socket.addEventListener('error', (err) => {
-        appendLog(`[エラー] ${err.message}`);
-      });
-    });
-
-    // メッセージ送信ボタンをクリックしたとき
-    sendBtn.addEventListener('click', () => {
-      const text = messageInput.value.trim();
-      if (!text || !socket || socket.readyState !== WebSocket.OPEN) return;
-      socket.send(text);
-      appendLog(`[クライアント] ${text}`);
-      messageInput.value = '';
-    });
-
-    // ログ表示用のヘルパー
-    function appendLog(msg) {
-      logEl.textContent += msg + '\n';
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-  </script>
-</body>
-</html>
+# 使い方例
+if __name__ == "__main__":
+    BUCKET = "your-bucket-name"
+    KEY = "path/to/file.zip"
+    DEST = "./file.zip"
+    download_with_tqdm(BUCKET, KEY, DEST)
