@@ -1,14 +1,12 @@
- executorch::extension::MallocMemoryAllocator method_alloc;  // heap をそのまま利用
-  executorch::extension::MallocMemoryAllocator temp_alloc;
-  executorch::runtime::HierarchicalAllocator   planned({}, 0); // 空で可
+std::vector<std::unique_ptr<uint8_t[]>> buf;
+  std::vector<executorch::runtime::Span<uint8_t>> spans;
+  for (size_t i = 0; i < meta.num_memory_planned_buffers(); ++i) {
+    size_t sz = static_cast<size_t>(meta.memory_planned_buffer_size(i).get());
+    buf.emplace_back(new uint8_t[sz]);                       // arena の実体
+    spans.push_back({buf.back().get(), sz});
+  }
+  executorch::runtime::HierarchicalAllocator planned({spans.data(), spans.size()});
+
+  /* 3. MemoryManager（ヒープでお手軽） ------------------------------ */
+  executorch::extension::MallocMemoryAllocator method_alloc, temp_alloc;
   executorch::runtime::MemoryManager mm(&method_alloc, &planned, &temp_alloc);
-
-  auto method_res = prog.load_method("forward", &mm);         // forward を想定
-  auto& method = method_res.get();
-
-  /* 4. 入力生成 & 実行 --------------------------------------------------- */
-  auto inputs_res = executorch::extension::prepare_input_tensors(method);
-  auto& inputs = inputs_res.get();                            // shape/dtype は完全一致
-
-  method.set_inputs(inputs.data(), inputs.size());
-  method.execute();                                
