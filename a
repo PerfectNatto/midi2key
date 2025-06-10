@@ -1,4 +1,23 @@
- auto& dl = executorch::extension::FileDataLoader::from("model.pte").get();
-  auto& pg = executorch::runtime::Program::load(&dl).get();
-  const char* name = *pg.get_method_name(0).get();           // 1 番目のメソッド
-  auto& meta = pg.method_meta(name).get();
+fun loadModel(context: Context): ByteBuffer {
+    context.assets.open("model.ort").use { input ->
+        val bytes = ByteArray(input.available())
+        input.read(bytes)
+        return ByteBuffer.allocateDirect(bytes.size).apply {
+            order(ByteOrder.nativeOrder())
+            put(bytes)
+            rewind()
+        }
+    }
+}
+
+val env  = OrtEnvironment.getEnvironment()
+
+val opts = OrtSession.SessionOptions().apply {
+    // ORT 形式を明示
+    addConfigEntry("session.load_model_format", "ORT")   // 必須
+    // NNAPI を使う場合 → addNnapi() や addConfigEntry でフラグ追加
+}
+
+val modelBuffer = loadModel(context)
+
+val session = env.createSession(modelBuffer, opts) 
