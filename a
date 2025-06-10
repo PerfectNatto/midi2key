@@ -1,12 +1,4 @@
-std::vector<std::unique_ptr<uint8_t[]>> buf;
-  std::vector<executorch::runtime::Span<uint8_t>> spans;
-  for (size_t i = 0; i < meta.num_memory_planned_buffers(); ++i) {
-    size_t sz = static_cast<size_t>(meta.memory_planned_buffer_size(i).get());
-    buf.emplace_back(new uint8_t[sz]);                       // arena の実体
-    spans.push_back({buf.back().get(), sz});
-  }
-  executorch::runtime::HierarchicalAllocator planned({spans.data(), spans.size()});
-
-  /* 3. MemoryManager（ヒープでお手軽） ------------------------------ */
-  executorch::extension::MallocMemoryAllocator method_alloc, temp_alloc;
-  executorch::runtime::MemoryManager mm(&method_alloc, &planned, &temp_alloc);
+ auto& dl = executorch::extension::FileDataLoader::from("model.pte").get();
+  auto& pg = executorch::runtime::Program::load(&dl).get();
+  const char* name = *pg.get_method_name(0).get();           // 1 番目のメソッド
+  auto& meta = pg.method_meta(name).get();
