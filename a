@@ -1,8 +1,32 @@
-import ai.onnxruntime.*;                 // ORT API
-import android.content.res.AssetManager; // assets へアクセス
-import java.io.InputStream;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.util.Collections;
-import java.util.Arrays;
-import android.util.Log;
+#include <JuceHeader.h>
+
+class App : public juce::JUCEApplication,
+            public juce::KeyListener
+{
+public:
+  const juce::String getApplicationName() override { return "MiniMidiSource"; }
+
+  void initialise (const juce::String&) override
+  {
+    out.reset (juce::MidiOutput::createNewDevice ("MiniMidiSource"));
+    juce::Desktop::getInstance().addKeyListener (this);      // 全体でキー取得
+  }
+
+  bool keyPressed (const juce::KeyPress& k, juce::Component*) override
+  {
+    if (k.getTextCharacter() == 'c' || k.getTextCharacter() == 'C')
+      out->sendMessageNow (juce::MidiMessage::noteOn (1, 60, (juce::uint8)100));
+    return false;                                            // 他の処理は温存
+  }
+
+  void shutdown() override
+  {
+    juce::Desktop::getInstance().removeKeyListener (this);
+    out = nullptr;
+  }
+
+private:
+  std::unique_ptr<juce::MidiOutput> out;
+};
+
+START_JUCE_APPLICATION (App)
