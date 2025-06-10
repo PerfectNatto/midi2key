@@ -1,23 +1,22 @@
-fun loadModel(context: Context): ByteBuffer {
-    context.assets.open("model.ort").use { input ->
-        val bytes = ByteArray(input.available())
-        input.read(bytes)
-        return ByteBuffer.allocateDirect(bytes.size).apply {
-            order(ByteOrder.nativeOrder())
-            put(bytes)
-            rewind()
-        }
+AssetManager am = getAssets();                 // Activity/Service なら this.getAssets()
+try (InputStream is = am.open("model.ort")) {  // assets/model.ort
+    int size = is.available();
+    ByteBuffer modelBuf = ByteBuffer.allocateDirect(size)
+                                    .order(ByteOrder.nativeOrder());
+    byte[] tmp = new byte[size];
+    is.read(tmp);
+    modelBuf.put(tmp).rewind();                // ← rewind が重要
+    // 2. ORT セッション作成
+    OrtEnvironment env = OrtEnvironment.getEnvironment();
+    OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
+    opts.addConfigEntry("session.load_model_format", "ORT"); // ORT 形式を明示
+    OrtSession session = env.createSession(modelBuf, opts);
+    // 3. 推論（例：1 次元 float 配列）
+    float[] data = /* 入力 */ ;
+    OnnxTensor input = OnnxTensor.createTensor(env, data, new long[]{1, data.length});
+    try (OrtSession.Result r =
+             session.run(Collections.singletonMap("input", input))) {
+        float[][] out = (float[][]) r.get(0).getValue();
+        Log.d("ORT", Arrays.deepToString(out));
     }
 }
-
-val env  = OrtEnvironment.getEnvironment()
-
-val opts = OrtSession.SessionOptions().apply {
-    // ORT 形式を明示
-    addConfigEntry("session.load_model_format", "ORT")   // 必須
-    // NNAPI を使う場合 → addNnapi() や addConfigEntry でフラグ追加
-}
-
-val modelBuffer = loadModel(context)
-
-val session = env.createSession(modelBuffer, opts) 
