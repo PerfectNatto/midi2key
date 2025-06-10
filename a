@@ -1,32 +1,104 @@
+#pragma once
 #include <JuceHeader.h>
 
-class App : public juce::JUCEApplication,
-            public juce::KeyListener
+class MainComponent : public juce::Component
 {
 public:
-  const juce::String getApplicationName() override { return "MiniMidiSource"; }
+    MainComponent();
+    ~MainComponent() override;
 
-  void initialise (const juce::String&) override
-  {
-    out.reset (juce::MidiOutput::createNewDevice ("MiniMidiSource"));
-    juce::Desktop::getInstance().addKeyListener (this);      // 全体でキー取得
-  }
+    void paint (juce::Graphics&) override;
+    void resized() override;
 
-  bool keyPressed (const juce::KeyPress& k, juce::Component*) override
-  {
-    if (k.getTextCharacter() == 'c' || k.getTextCharacter() == 'C')
-      out->sendMessageNow (juce::MidiMessage::noteOn (1, 60, (juce::uint8)100));
-    return false;                                            // 他の処理は温存
-  }
-
-  void shutdown() override
-  {
-    juce::Desktop::getInstance().removeKeyListener (this);
-    out = nullptr;
-  }
+    /** 文字列（空白区切り 16 進バイト列）を MIDI メッセージに変換して即時送出する。
+        例: "90 3C 7F" → NoteOn ch1, note 60, velocity 127
+        ※ デモ目的のユーティリティであり、本サンプル内では呼び出していません。
+    */
+    void sendStringAsMidi (const juce::String& hexString);
 
 private:
-  std::unique_ptr<juce::MidiOutput> out;
+    std::unique_ptr<juce::MidiOutput> virtualMidiOut;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
 
-START_JUCE_APPLICATION (App)
+#include "MainComponent.h"
+
+MainComponent::MainComponent()
+{
+    // macOS では createNewDevice で仮想出力を生成できる
+    virtualMidiOut = juce::MidiOutput::createNewDevice ("JUCE8 Virtual Out");
+    setSize (400, 200);
+}
+
+MainComponent::~MainComponent() = default;
+
+void MainComponent::paint (juce::Graphics& g)
+{
+    g.fillAll (juce::Colours::black);
+    g.setColour (juce::Colours::white);
+    g.setFont (20.0f);
+    g.drawFittedText ("JUCE8 MIDI-Out Endpoint", getLocalBounds(),
+                      juce::Justification::centred, 1);
+}
+
+void MainComponent::resized() {}
+
+void MainComponent::sendStringAsMidi (const juce::String& hexString)
+{
+    if (virtualMidiOut == nullptr || hexString.isEmpty())
+        return;
+
+    juce::StringArray tokens;
+    tokens.addTokens (hexString, " ", "");
+    juce::HeapBlock<uint8_t> data ((size_t) tokens.size());
+
+    for (int i = 0; i < tokens.size(); ++i)
+        data[i] = static_cast<uint8_t> (tokens[i].getHexValue32());
+
+    const double ts = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    juce::MidiMessage msg (data, (int) tokens.size(), ts);
+
+    virtualMidiOut->sendMessageNow (msg); // 即時送信:contentReference[oaicite:1]{index=1}
+}
+
+#include <JuceHeader.h>
+#include "MainComponent.h"
+
+class MidiEndpointApplication : public juce::JUCEApplication
+{
+public:
+    const juce::String getApplicationName()  override { return "JUCE8 MIDI Out Endpoint"; }
+    const juce::String getApplicationVersion() override { return "1.0.0"; }
+
+    void initialise (const juce::String&) override
+    {
+        mainWindow.reset (new MainWindow (getApplicationName()));
+    }
+    void shutdown() override { mainWindow = nullptr; }
+
+private:
+    class MainWindow : public juce::DocumentWindow
+    {
+    public:
+        explicit MainWindow (juce::String name)
+            : DocumentWindow (std::move (name),
+                              juce::Desktop::getInstance()
+                                  .getDefaultLookAndFeel()
+                                  .findColour (juce::ResizableWindow::backgroundColourId),
+                              DocumentWindow::allButtons)
+        {
+            setUsingNativeTitleBar (true);
+            setContentOwned (new MainComponent(), true);
+            centreWithSize (getWidth(), getHeight());
+            setVisible (true);
+        }
+        void closeButtonPressed() override
+        {
+            juce::JUCEApplication::getInstance()->systemRequestedQuit();
+        }
+    };
+
+    std::unique_ptr<MainWindow> mainWindow;
+};
+
+START_JUCE_APPLICATION (MidiEndpointApplication)
