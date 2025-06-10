@@ -1,29 +1,14 @@
-import boto3
-from tqdm import tqdm
+ executorch::extension::MallocMemoryAllocator method_alloc;  // heap をそのまま利用
+  executorch::extension::MallocMemoryAllocator temp_alloc;
+  executorch::runtime::HierarchicalAllocator   planned({}, 0); // 空で可
+  executorch::runtime::MemoryManager mm(&method_alloc, &planned, &temp_alloc);
 
-class ProgressPercentage:
-    def __init__(self, bucket: str, key: str):
-        s3 = boto3.client('s3')
-        size = s3.head_object(Bucket=bucket, Key=key)['ContentLength']
-        self._bar = tqdm(total=size, unit='B', unit_scale=True, desc=key.split('/')[-1])
+  auto method_res = prog.load_method("forward", &mm);         // forward を想定
+  auto& method = method_res.get();
 
-    def __call__(self, bytes_amount):
-        self._bar.update(bytes_amount)
+  /* 4. 入力生成 & 実行 --------------------------------------------------- */
+  auto inputs_res = executorch::extension::prepare_input_tensors(method);
+  auto& inputs = inputs_res.get();                            // shape/dtype は完全一致
 
-    def close(self):
-        self._bar.close()
-
-def download_with_tqdm(bucket: str, key: str, dest: str):
-    s3 = boto3.client('s3')
-    prog = ProgressPercentage(bucket, key)
-    try:
-        s3.download_file(Bucket=bucket, Key=key, Filename=dest, Callback=prog)
-    finally:
-        prog.close()
-
-# 使い方例
-if __name__ == "__main__":
-    BUCKET = "your-bucket-name"
-    KEY = "path/to/file.zip"
-    DEST = "./file.zip"
-    download_with_tqdm(BUCKET, KEY, DEST)
+  method.set_inputs(inputs.data(), inputs.size());
+  method.execute();                                
