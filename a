@@ -1,26 +1,11 @@
-<input id="midiFileInput" type="file" accept=".mid,.midi" />
-
-<script>
-  const input = document.getElementById('midiFileInput');
-  input.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    // ArrayBuffer で読み込む
-    const arrayBuffer = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(reader.error);
-      reader.onload  = () => resolve(reader.result);
-      reader.readAsArrayBuffer(file);
-    });
-
-    // ここで parseSMF は、自前のパーサーやライブラリ呼び出し
-    parseSMF(arrayBuffer);
-  });
-
-  function parseSMF(buffer) {
-    // 例: https://github.com/nfroidure/MIDIFile の MidiFile を使う場合
-    // const midi = new MidiFile(buffer);
-    // console.log(midi.getTracks(), midi.getDuration());
+function arrayBufferToBase64(buffer) {
+  // ArrayBuffer → Uint8Array に変換
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  // バイトごとに文字列化
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
-</script>
+  // btoa で Base64 エンコード
+  return btoa(binary);
+}
