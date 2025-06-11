@@ -1,86 +1,26 @@
-class MidiWebBrowser : public juce::WebBrowserComponent
-{
-public:
-    explicit MidiWebBrowser (MainComponent& ownerIn) : owner (ownerIn) {}
+<input id="midiFileInput" type="file" accept=".mid,.midi" />
 
-    bool pageAboutToLoad (const juce::String& newURL) override
-    {
-        juce::URL url (newURL);
-        if (url.getScheme() == "juce" && url.getHost() == "sendMidi")
-        {
-            owner.sendStringAsMidi (url.getQueryParameter ("data"));
-            return false;              // ページ遷移はブロック
-        }
-        return true;                   // 通常の URL は許可
-    }
-
-private:
-    MainComponent& owner;
-};
-
-#include "MainComponent.h"
-
-// ファイル名は実行ファイルと同じフォルダに置いた index.html を想定
-static juce::File getLocalHtml() {
-    return juce::File::getSpecialLocation (juce::File::currentExecutableFile)
-           .getParentDirectory().getChildFile ("index.html");
-}
-
-MainComponent::MainComponent()
-{
-    virtualMidiOut = juce::MidiOutput::createNewDevice ("JUCE8 Virtual Out");
-    browser        = std::make_unique<MidiWebBrowser> (*this);
-    addAndMakeVisible (*browser);
-
-    browser->goToURL ("file://" + getLocalHtml().getFullPathName());
-    setSize (600, 400);
-}
-
-MainComponent::~MainComponent() = default;
-
-void MainComponent::paint (juce::Graphics& g)
-{
-    g.fillAll (juce::Colours::black);
-}
-
-void MainComponent::resized()
-{
-    browser->setBounds (getLocalBounds());
-}
-
-void MainComponent::sendStringAsMidi (const juce::String& hexString)
-{
-    if (! virtualMidiOut || hexString.isEmpty())
-        return;
-
-    juce::StringArray bytes;
-    bytes.addTokens (hexString, " ", "");
-    juce::HeapBlock<uint8_t> data (bytes.size());
-
-    for (int i = 0; i < bytes.size(); ++i)
-        data[i] = static_cast<uint8_t> (bytes[i].getHexValue32());
-
-    const double ts = juce::Time::getMillisecondCounterHiRes() * 0.001;
-    juce::MidiMessage msg (data, (int) bytes.size(), ts);
-    virtualMidiOut->sendMessageNow (msg);
-}
-
-<!doctype html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<title>MIDI Sender</title>
 <script>
-function sendMidi() {
-  const hex = document.getElementById('hex').value.trim();
-  // JUCE 側でフックする custom scheme
-  window.location.href = 'juce://sendMidi?data=' + encodeURIComponent(hex);
-}
+  const input = document.getElementById('midiFileInput');
+  input.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // ArrayBuffer で読み込む
+    const arrayBuffer = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error);
+      reader.onload  = () => resolve(reader.result);
+      reader.readAsArrayBuffer(file);
+    });
+
+    // ここで parseSMF は、自前のパーサーやライブラリ呼び出し
+    parseSMF(arrayBuffer);
+  });
+
+  function parseSMF(buffer) {
+    // 例: https://github.com/nfroidure/MIDIFile の MidiFile を使う場合
+    // const midi = new MidiFile(buffer);
+    // console.log(midi.getTracks(), midi.getDuration());
+  }
 </script>
-</head>
-<body style="font-family:sans-serif">
-<h2>JUCE MIDI Sender</h2>
-<input id="hex" size="20" value="90 3C 7F">
-<button onclick="sendMidi()">Send</button>
-</body>
-</html>
