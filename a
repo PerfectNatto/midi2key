@@ -1,13 +1,10 @@
-function base64ToMidiFile(base64Data, fileName) {
-  // 1. Base64 → バイナリ文字列
-  const binaryString = atob(base64Data);
-  // 2. バイナリ文字列 → Uint8Array
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  // 3. Blob を経由して File を生成
-  const blob = new Blob([bytes], { type: 'audio/midi' });
-  return new File([blob], fileName, { type: 'audio/midi' });
-}
+exp_prog = export(model, example_input)
+
+# グラフノードを巡回
+for node in exp_prog.graph.nodes:
+    # call_function + aten::abs を対象に
+    if node.op == "call_function" and node.target == torch.ops.aten.abs:
+        dtype = node.meta.get("tensor_meta", {}).get("dtype")
+        # 整数型なら出力
+        if dtype and "int" in str(dtype):
+            print(f"Found integer abs at node {node.format_node()} with dtype={dtype}")
