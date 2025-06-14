@@ -1,7 +1,7 @@
 #include <iostream>
 #include <vector>
-#include <cstdlib>   // std::abort
-#include <cstdio>    // FILE*, fopen, fclose
+#include <cstdlib>
+#include <cstdio>
 #include <inttypes.h>
 
 #include <gflags/gflags.h>
@@ -25,19 +25,19 @@
 #include <executorch/extension/threadpool/threadpool.h>
 #endif
 
-// ---------------------------------------------------------------------------------------------------------------------
+// -------------------------------------------------------
 // gflags
-// ---------------------------------------------------------------------------------------------------------------------
+// -------------------------------------------------------
 DEFINE_string(model_path, "model.pte", "Model serialized in flatbuffer format.");
 DEFINE_uint32(num_executions, 1, "Number of times to run the model.");
 #ifdef ET_EVENT_TRACER_ENABLED
 DEFINE_string(etdump_path, "model.etdump", "Write ETDump data to this path.");
-#endif // ET_EVENT_TRACER_ENABLED
-DEFINE_int32(cpu_threads, -1, "Number of CPU threads for inference. -1 = heuristic.");
+#endif
+DEFINE_int32(cpu_threads, -1, "Number of CPU threads for inference. -1 = heuristic");
 
-// ---------------------------------------------------------------------------------------------------------------------
-// using declarations
-// ---------------------------------------------------------------------------------------------------------------------
+// -------------------------------------------------------
+// aliases
+// -------------------------------------------------------
 using executorch::extension::FileDataLoader;
 using executorch::runtime::Error;
 using executorch::runtime::EValue;
@@ -51,9 +51,9 @@ using executorch::runtime::Program;
 using executorch::runtime::Result;
 using executorch::runtime::Span;
 
-// ---------------------------------------------------------------------------------------------------------------------
-// Helper to manage ETDump generation
-// ---------------------------------------------------------------------------------------------------------------------
+// -------------------------------------------------------
+// ETDump helper
+// -------------------------------------------------------
 class EventTraceManager {
  public:
   EventTraceManager() {
@@ -61,10 +61,7 @@ class EventTraceManager {
     tracer_ = std::make_shared<executorch::etdump::ETDumpGen>();
 #endif
   }
-
-  EventTracer* get() const {
-    return tracer_.get();
-  }
+  EventTracer* get() const { return tracer_.get(); }
 
   Error dump_to_file() const {
 #ifdef ET_EVENT_TRACER_ENABLED
@@ -74,7 +71,6 @@ class EventTraceManager {
       ET_LOG(Error, "Failed to open ETDump file %s", path);
       return Error::AccessFailed;
     }
-
     auto* gen = static_cast<executorch::etdump::ETDumpGen*>(tracer_.get());
     executorch::etdump::ETDumpResult r = gen->get_etdump_data();
     if (r.buf && r.size > 0) {
@@ -93,13 +89,10 @@ class EventTraceManager {
   std::shared_ptr<EventTracer> tracer_{nullptr};
 };
 
-// ---------------------------------------------------------------------------------------------------------------------
 int main(int argc, char** argv) {
   executorch::runtime::runtime_init();
 
-  // ---------------------------------------------------------------------------
-  // Parse CLI
-  // ---------------------------------------------------------------------------
+  // CLI
   gflags::ParseCommandLineFlags(&argc, &argv, true);
   if (argc != 1) {
     std::string msg = "Extra command-line args:";
@@ -108,9 +101,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // ---------------------------------------------------------------------------
-  // Thread-pool configuration (optional)
-  // ---------------------------------------------------------------------------
+  // Thread‑pool (optional)
 #if defined(ET_USE_THREADPOOL)
   uint32_t threads = (FLAGS_cpu_threads == -1)
       ? ::executorch::extension::cpuinfo::get_num_performant_cores()
@@ -121,9 +112,7 @@ int main(int argc, char** argv) {
   }
 #endif
 
-  // ---------------------------------------------------------------------------
-  // Load program
-  // ---------------------------------------------------------------------------
+  // Load model
   Result<FileDataLoader> loader = FileDataLoader::from(FLAGS_model_path.c_str());
   ET_CHECK_MSG(loader.ok(), "FileDataLoader::from() failed: 0x%08" PRIx32, (uint32_t)loader.error());
 
@@ -131,63 +120,50 @@ int main(int argc, char** argv) {
   ET_CHECK_MSG(program.ok(), "Failed to parse model file %s", FLAGS_model_path.c_str());
   ET_LOG(Info, "Model file %s loaded", FLAGS_model_path.c_str());
 
-  // ---------------------------------------------------------------------------
-  // Resolve first method
-  // ---------------------------------------------------------------------------
+  // First method
   const char* method_name = nullptr;
   {
-    auto name_result = program->get_method_name(0);
-    ET_CHECK_MSG(name_result.ok(), "Program has no methods");
-    method_name = *name_result;
+    auto r = program->get_method_name(0);
+    ET_CHECK_MSG(r.ok(), "Program has no methods");
+    method_name = *r;
   }
   ET_LOG(Info, "Using method %s", method_name);
 
   Result<MethodMeta> meta = program->method_meta(method_name);
   ET_CHECK_MSG(meta.ok(), "Failed to get method_meta for %s: 0x%08" PRIx32, method_name, (uint32_t)meta.error());
 
-  // -------------------------------------------------------------------------------------------------------------------
   // Memory pools
-  // -------------------------------------------------------------------------------------------------------------------
-  size_t pool_size_bytes = 0;
-  if (meta->num_memory_planned_buffers() > 0) {
-    pool_size_bytes = static_cast<size_t>(meta->memory_planned_buffer_size(0).get()) * meta->num_memory_planned_buffers();
-  } else {
-    pool_size_bytes = 1 * 1024 * 1024;  // fallback 1 MiB
-  }
+  size_t pool_bytes = meta->num_memory_planned_buffers() > 0
+      ? static_cast<size_t>(meta->memory_planned_buffer_size(0).get()) * meta->num_memory_planned_buffers()
+      : 1 * 1024 * 1024;  // 1 MiB fallback
 
-  std::vector<uint8_t> method_pool(pool_size_bytes);
-  std::vector<uint8_t> temp_pool(pool_size_bytes);
-
+  std::vector<uint8_t> method_pool(pool_bytes);
+  std::vector<uint8_t> temp_pool(pool_bytes);
   MemoryAllocator method_alloc(static_cast<uint32_t>(method_pool.size()), method_pool.data());
   MemoryAllocator temp_alloc(static_cast<uint32_t>(temp_pool.size()), temp_pool.data());
 
-  size_t n_planned = meta->num_memory_planned_buffers();
-  std::vector<std::vector<uint8_t>> planned_buffers(n_planned);
-  std::vector<Span<uint8_t>>        planned_spans(n_planned);
-  for (size_t i = 0; i < n_planned; ++i) {
+  size_t n_buf = meta->num_memory_planned_buffers();
+  std::vector<std::vector<uint8_t>> planned_buf(n_buf);
+  std::vector<Span<uint8_t>>        planned_spans(n_buf);
+  for (size_t i = 0; i < n_buf; ++i) {
     size_t sz = static_cast<size_t>(meta->memory_planned_buffer_size(i).get());
     ET_LOG(Info, "Planned buffer %zu : %zu bytes", i, sz);
-    planned_buffers[i].resize(sz);
-    planned_spans[i] = {planned_buffers[i].data(), sz};
+    planned_buf[i].resize(sz);
+    planned_spans[i] = {planned_buf[i].data(), sz};
   }
   HierarchicalAllocator planned_mem({planned_spans.data(), planned_spans.size()});
-
   MemoryManager mem_mgr(&method_alloc, &planned_mem, &temp_alloc);
 
-  // -------------------------------------------------------------------------------------------------------------------
   // Load method
-  // -------------------------------------------------------------------------------------------------------------------
   EventTraceManager trace_mgr;
   Result<Method> method = program->load_method(method_name, &mem_mgr, trace_mgr.get());
   ET_CHECK_MSG(method.ok(), "load_method(%s) failed: 0x%08" PRIx32, method_name, (uint32_t)method.error());
   ET_LOG(Info, "Method loaded");
 
-  // -------------------------------------------------------------------------------------------------------------------
   // Execute
-  // -------------------------------------------------------------------------------------------------------------------
   et_timestamp_t exec_time_ticks = 0;
-  for (uint32_t n = 0; n < FLAGS_num_executions; ++n) {
-    ET_LOG(Debug, "Preparing inputs (%u/%u)", n + 1, FLAGS_num_executions);
+  for (uint32_t i = 0; i < FLAGS_num_executions; ++i) {
+    ET_LOG(Debug, "Preparing inputs (%u/%u)", i + 1, FLAGS_num_executions);
     auto inputs = executorch::extension::prepare_input_tensors(*method);
     ET_CHECK_MSG(inputs.ok(), "prepare_input_tensors failed: 0x%08" PRIx32, (uint32_t)inputs.error());
 
@@ -200,4 +176,21 @@ int main(int argc, char** argv) {
 
   constexpr double NS_PER_MS = 1'000'000.0;
   auto ratio = et_pal_ticks_to_ns_multiplier();
-  double ms = static_cast<double>(exec_time
+  double ms = static_cast<double>(exec_time_ticks) * ratio.numerator / ratio.denominator / NS_PER_MS;
+  ET_LOG(Info, "Executed %u time(s) in %.3f ms", FLAGS_num_executions, ms);
+
+  // Outputs
+  std::vector<EValue> outputs(method->outputs_size());
+  ET_CHECK(method->get_outputs(outputs.data(), outputs.size()) == Error::Ok);
+  std::cout << executorch::extension::evalue_edge_items(100);
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    std::cout << "Output " << i << ": " << outputs[i] << std::endl;
+  }
+
+  // ETDump
+  if (trace_mgr.get()) {
+    ET_CHECK(trace_mgr.dump_to_file() == Error::Ok);
+  }
+
+  return 0;
+}
