@@ -132,15 +132,14 @@ int main(int argc, char** argv) {
   Result<MethodMeta> meta = program->method_meta(method_name);
   ET_CHECK_MSG(meta.ok(), "Failed to get method_meta for %s: 0x%08" PRIx32, method_name, (uint32_t)meta.error());
 
-  // Memory pools
-  size_t pool_bytes = meta->num_memory_planned_buffers() > 0
-      ? static_cast<size_t>(meta->memory_planned_buffer_size(0).get()) * meta->num_memory_planned_buffers()
-      : 1 * 1024 * 1024;  // 1 MiB fallback
-
-  std::vector<uint8_t> method_pool(pool_bytes);
-  std::vector<uint8_t> temp_pool(pool_bytes);
-  MemoryAllocator method_alloc(static_cast<uint32_t>(method_pool.size()), method_pool.data());
-  MemoryAllocator temp_alloc(static_cast<uint32_t>(temp_pool.size()), temp_pool.data());
+  // ------------------------------------------------------------------------------------
+  // Memory allocators
+  //   * Method allocator  : malloc-based (dynamic), avoids guessing pool size.
+  //   * Temp allocator    : malloc-based (dynamic).
+  //   * Planned memory    : hierarchy of arenas sized exactly per MethodMeta.
+  // ------------------------------------------------------------------------------------
+  executorch::extension::MallocMemoryAllocator method_alloc;
+  executorch::extension::MallocMemoryAllocator temp_alloc;
 
   size_t n_buf = meta->num_memory_planned_buffers();
   std::vector<std::vector<uint8_t>> planned_buf(n_buf);
@@ -152,7 +151,7 @@ int main(int argc, char** argv) {
     planned_spans[i] = {planned_buf[i].data(), sz};
   }
   HierarchicalAllocator planned_mem({planned_spans.data(), planned_spans.size()});
-  MemoryManager mem_mgr(&method_alloc, &planned_mem, &temp_alloc);
+  MemoryManager mem_mgr(&method_alloc, &planned_mem, &temp_alloc);(&method_alloc, &planned_mem, &temp_alloc);
 
   // Load method
   EventTraceManager trace_mgr;
