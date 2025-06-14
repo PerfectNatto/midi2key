@@ -1,41 +1,8 @@
-#include <iostream>
-#include <executorch/runtime/Runtime.h>
-#include <executorch/runtime/Program.h>
-#include <executorch/runtime/Graph.h>     // Graph API ヘッダー
-
-using namespace executorch::runtime;
-
-int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cerr << "Usage: runner_bin --model_path path/to/model.pte\n";
-        return 1;
-    }
-
-    // 引数から .pte のパスを取り出し
-    std::string model_path = argv[1];
-
-    // 1) ランタイムを初期化
-    Runtime& rt = Runtime::get();
-
-    // 2) プログラムをロード (.pte を読み込む)
-    Program* prog = rt.load_program(model_path, Verification::Minimal);
-    if (!prog) {
-        std::cerr << "Failed to load program\n";
-        return 1;
-    }
-
-    // 3) グラフオブジェクトを取得
-    const Graph& graph = prog->get_graph();
-
-    // 4) ノードごとに情報を出力
-    std::cout << "Nodes in the graph:\n";
-    for (const auto& node : graph.nodes()) {
-        std::cout 
-            << "  op=" << node->getOpName()
-            << ", dtype=" << node->getDtype()
-            << ", layout=" << node->getLayout()
-            << "\n";
-    }
-
-    return 0;
-}
+cmake .. \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DEXECUTORCH_BUILD_VULKAN=ON \
+  -DEXECUTORCH_BUILD_EXTENSION_MODULE=ON \
+  -DEXECUTORCH_BUILD_XNNPACK=OFF \
+  -DEXECUTORCH_BUILD_QNN=OFF \
+  -DEXECUTORCH_BUILD_NEURON=OFF \
+  -DBUILD_SHARED_LIBS=ON
