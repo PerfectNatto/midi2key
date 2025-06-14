@@ -1,6 +1,8 @@
 #include <iostream>
 #include <vector>
-#include <cstdlib>  // for std::abort (ExecuTorch uses abort in ET_CHECK)
+#include <cstdlib>   // std::abort
+#include <cstdio>    // FILE*, fopen, fclose
+#include <inttypes.h>
 
 #include <gflags/gflags.h>
 
@@ -8,7 +10,7 @@
 #include <executorch/extension/evalue_util/print_evalue.h>
 #include <executorch/extension/runner_util/inputs.h>
 #include <executorch/runtime/core/event_tracer.h>
-#include <executorch/runtime/core/memory_allocator.h>  // MemoryAllocator for user‑supplied pools
+#include <executorch/runtime/core/memory_allocator.h>
 #include <executorch/runtime/executor/method.h>
 #include <executorch/runtime/executor/program.h>
 #include <executorch/runtime/platform/log.h>
@@ -41,7 +43,7 @@ using executorch::runtime::Error;
 using executorch::runtime::EValue;
 using executorch::runtime::EventTracer;
 using executorch::runtime::HierarchicalAllocator;
-using executorch::runtime::MemoryAllocator;  // malloc‑based allocator that borrows user memory
+using executorch::runtime::MemoryAllocator;
 using executorch::runtime::MemoryManager;
 using executorch::runtime::Method;
 using executorch::runtime::MethodMeta;
@@ -66,10 +68,6 @@ class EventTraceManager {
 
   Error dump_to_file() const {
 #ifdef ET_EVENT_TRACER_ENABLED
-    if (!tracer_) {
-      return Error::NotSupported;
-    }
-
     const char* path = FLAGS_etdump_path.c_str();
     std::unique_ptr<FILE, decltype(&fclose)> fp{fopen(path, "wb"), fclose};
     if (!fp) {
@@ -77,7 +75,7 @@ class EventTraceManager {
       return Error::AccessFailed;
     }
 
-    executorch::etdump::ETDumpGen* gen = static_cast<executorch::etdump::ETDumpGen*>(tracer_.get());
+    auto* gen = static_cast<executorch::etdump::ETDumpGen*>(tracer_.get());
     executorch::etdump::ETDumpResult r = gen->get_etdump_data();
     if (r.buf && r.size > 0) {
       fwrite(r.buf, 1, r.size, fp.get());
@@ -87,7 +85,6 @@ class EventTraceManager {
     }
     return Error::NotFound;
 #else
-    (void)path; // suppress unused warning when ETDump disabled
     return Error::NotSupported;
 #endif
   }
@@ -105,14 +102,14 @@ int main(int argc, char** argv) {
   // ---------------------------------------------------------------------------
   gflags::ParseCommandLineFlags(&argc, &argv, true);
   if (argc != 1) {
-    std::string msg = "Extra commandline args:";
+    std::string msg = "Extra command-line args:";
     for (int i = 1; i < argc; ++i) msg += " " + std::string(argv[i]);
     ET_LOG(Error, "%s", msg.c_str());
     return 1;
   }
 
   // ---------------------------------------------------------------------------
-  // Thread‑pool configuration (optional)
+  // Thread-pool configuration (optional)
   // ---------------------------------------------------------------------------
 #if defined(ET_USE_THREADPOOL)
   uint32_t threads = (FLAGS_cpu_threads == -1)
@@ -151,27 +148,22 @@ int main(int argc, char** argv) {
   // -------------------------------------------------------------------------------------------------------------------
   // Memory pools
   // -------------------------------------------------------------------------------------------------------------------
-  // 1. Method / temp pools
   size_t pool_size_bytes = 0;
   if (meta->num_memory_planned_buffers() > 0) {
     pool_size_bytes = static_cast<size_t>(meta->memory_planned_buffer_size(0).get()) * meta->num_memory_planned_buffers();
   } else {
-    pool_size_bytes = 1 * 1024 * 1024;  // fallback 1 MiB
+    pool_size_bytes = 1 * 1024 * 1024;  // fallback 1 MiB
   }
 
-  // Hold pools in std::vector so their lifetime extends until end of main()
   std::vector<uint8_t> method_pool(pool_size_bytes);
   std::vector<uint8_t> temp_pool(pool_size_bytes);
 
-  // MemoryAllocator expects uint32_t size. ExecuTorch 0.6 is 32‑bit limited.
   MemoryAllocator method_alloc(static_cast<uint32_t>(method_pool.size()), method_pool.data());
   MemoryAllocator temp_alloc(static_cast<uint32_t>(temp_pool.size()), temp_pool.data());
 
-  // 2. Planned buffers
-  size_t const n_planned = meta->num_memory_planned_buffers();
+  size_t n_planned = meta->num_memory_planned_buffers();
   std::vector<std::vector<uint8_t>> planned_buffers(n_planned);
   std::vector<Span<uint8_t>>        planned_spans(n_planned);
-
   for (size_t i = 0; i < n_planned; ++i) {
     size_t sz = static_cast<size_t>(meta->memory_planned_buffer_size(i).get());
     ET_LOG(Info, "Planned buffer %zu : %zu bytes", i, sz);
@@ -208,26 +200,4 @@ int main(int argc, char** argv) {
 
   constexpr double NS_PER_MS = 1'000'000.0;
   auto ratio = et_pal_ticks_to_ns_multiplier();
-  double ms = static_cast<double>(exec_time_ticks) * ratio.numerator / ratio.denominator / NS_PER_MS;
-  ET_LOG(Info, "Executed %u time(s) in %.3f ms", FLAGS_num_executions, ms);
-
-  // -------------------------------------------------------------------------------------------------------------------
-  // Fetch outputs
-  // -------------------------------------------------------------------------------------------------------------------
-  std::vector<EValue> outputs(method->outputs_size());
-  ET_CHECK(method->get_outputs(outputs.data(), outputs.size()) == Error::Ok);
-  std::cout << executorch::extension::evalue_edge_items(100);
-  for (size_t i = 0; i < outputs.size(); ++i) {
-    std::cout << "Output " << i << ": " << outputs[i] << std::endl;
-  }
-
-  // -------------------------------------------------------------------------------------------------------------------
-  // ETDump
-  // -------------------------------------------------------------------------------------------------------------------
-  if (trace_mgr.get()) {
-    ET_CHECK(trace_mgr.dump_to_file() == Error::Ok);
-  }
-
-  // vectors release memory automatically here.
-  return 0;
-}
+  double ms = static_cast<double>(exec_time
