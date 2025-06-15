@@ -1,50 +1,85 @@
-// backends/vulkan/runtime/graph/ops/impl/Unsqueeze.cpp  ★Patched
-// -----------------------------------------------------------------------------
-// 修正内容: new_shape の確保長を old_rank + dims.size() に変更し、
-//          ループ添字 i をそのまま書込み先に使用。
-//          これにより AddressSanitizer が報告した
-//          heap-buffer-overflow (old implementation) が解消されます。
-// -----------------------------------------------------------------------------
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
 
-#include <algorithm>
-#include <vector>
+#include <executorch/backends/vulkan/runtime/graph/ops/OperatorRegistry.h>
 
-#include "ComputeGraph.h"   // 仮想ヘッダ: 実際は vkcompute ヘッダ群に合わせてください
+#include <executorch/backends/vulkan/runtime/graph/ops/impl/Permute.h>
+#include <executorch/backends/vulkan/runtime/graph/ops/impl/utils/KernelUtils.h>
+#include <executorch/backends/vulkan/runtime/graph/ops/utils/ShaderNameUtils.h>
 
 namespace vkcompute {
 
-// 旧実装そのまま（抜粋） -------------------------------------------------------
-// ※ add_unsqueeze_node はここではダミー実装で示します。
-//   本来は ComputeGraph にノードを追加し、shape を更新する関数。
+//////////////////////////////////////////////////////////////////////////////
+// Correct‑by‑construction unsqueeze (copy) implementation
+// ‑ Fixes previous out‑of‑bounds write when constructing `permute_dims`.
+//   * Accepts negative `dim` like PyTorch (‑1 == last axis).
+//   * Works for tensors with rank ≤ 3 as per Vulkan backend spec.
+//   * Guarantees `permute_dims.size() == out_dim` before any write.
+//////////////////////////////////////////////////////////////////////////////
+
 void add_unsqueeze_node(
     ComputeGraph& graph,
-    int           src_id,
-    int           dst_id,
-    int           axis) {
-  // ... 既存処理 ...
-  (void)graph; (void)src_id; (void)dst_id; (void)axis; // placeholder
-}
+    const ValueRef in,
+    const ValueRef dim_ref,
+    const ValueRef out) {
+  const int64_t in_rank  = graph.dim_of(in);   // e.g. NCH or NCHW
+  const int64_t out_rank = graph.dim_of(out);  // should be in_rank + 1
 
-// ------------------------------ PATCHED ---------------------------------------
-void unsqueeze(ComputeGraph& graph, const std::vector<int>& dims) {
-  const std::vector<long>& old_shape = graph.current_shape();
-  const int old_rank = static_cast<int>(old_shape.size());
+  VK_CHECK_COND(
+      in_rank < 4,
+      "Cannot unsqueeze a tensor with more than 3 dimensions (got %ld)",
+      in_rank);
 
-  // ★ 修正点 1: new_shape の確保長を正しく計算
-  std::vector<long> new_shape(old_rank + static_cast<int>(dims.size()));
+  // ------------------ axis value ------------------
+  int64_t dim = graph.extract_scalar<int64_t>(dim_ref);
+  // Handle negative dim the same way as PyTorch: ‑1 は最後尾
+  if (dim < 0) {
+    dim += out_rank;
+  }
+  VK_CHECK_COND(
+      dim >= 0 && dim <= out_rank,
+      "Unsqueeze axis %ld is out of bounds for rank %ld",
+      dim,
+      out_rank);
 
-  // ★ 修正点 2: dst_idx を廃止し、ループ添字 i をそのまま使用
-  int src_idx = 0;
-  for (int i = 0; i < old_rank + static_cast<int>(dims.size()); ++i) {
-    if (std::find(dims.begin(), dims.end(), i) != dims.end()) {
-      new_shape[i] = 1;  // 挿入された axis
-    } else {
-      new_shape[i] = old_shape[src_idx++]; // 既存次元をコピー
+  // ------------------ permutation vector ------------------
+  // shape before : [D0, D1, ... D(in_rank‑1)]
+  // after unsqueeze on `dim`: new axis length 1 is inserted at `dim`.
+  // To realiseこの変換 via Permute + Reshape trick used by Vulkan backend:
+  //   * First permute so that old axis order is shifted, 0 becomes `dim`.
+  //   * Then reshape inserts 1 at front (done inside Permute op).
+
+  std::vector<int64_t> permute_dims(static_cast<size_t>(out_rank));
+  // Example: in_rank=3, dim=2 → [1,2,0,3]
+  for (int i = 0; i < out_rank; ++i) {
+    if (i < dim) {
+      permute_dims[i] = i + 1;     // shift left part right by 1
+    } else if (i == dim) {
+      permute_dims[i] = 0;         // place original axis‑0 here
+    } else { // i > dim
+      permute_dims[i] = i;         // axes after `dim` keep same id
     }
   }
 
-  // 新しい shape をグラフへ登録（具体的 API は実装に合わせて）
-  graph.set_shape(new_shape);
+  const ValueRef permute_dims_ref =
+      graph.add_scalar_list<int64_t>(permute_dims);
+
+  add_permute_node(graph, in, permute_dims_ref, out);
+}
+
+void unsqueeze(ComputeGraph& graph, const std::vector<ValueRef>& args) {
+  // args order: input, dim tensor, output
+  add_unsqueeze_node(graph, args[0], args[1], args[2]);
+}
+
+REGISTER_OPERATORS {
+  // aten.unsqueeze_copy.default maps to this Vulkan implementation
+  VK_REGISTER_OP(aten.unsqueeze_copy.default, unsqueeze);
 }
 
 } // namespace vkcompute
