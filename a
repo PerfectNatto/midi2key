@@ -1,85 +1,28 @@
-/*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
- * All rights reserved.
- *
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree.
- */
-
-#include <executorch/backends/vulkan/runtime/graph/ops/OperatorRegistry.h>
-
-#include <executorch/backends/vulkan/runtime/graph/ops/impl/Permute.h>
-#include <executorch/backends/vulkan/runtime/graph/ops/impl/utils/KernelUtils.h>
-#include <executorch/backends/vulkan/runtime/graph/ops/utils/ShaderNameUtils.h>
-
-namespace vkcompute {
-
-//////////////////////////////////////////////////////////////////////////////
-// Correct‑by‑construction unsqueeze (copy) implementation
-// ‑ Fixes previous out‑of‑bounds write when constructing `permute_dims`.
-//   * Accepts negative `dim` like PyTorch (‑1 == last axis).
-//   * Works for tensors with rank ≤ 3 as per Vulkan backend spec.
-//   * Guarantees `permute_dims.size() == out_dim` before any write.
-//////////////////////////////////////////////////////////////////////////////
-
-void add_unsqueeze_node(
-    ComputeGraph& graph,
-    const ValueRef in,
-    const ValueRef dim_ref,
-    const ValueRef out) {
-  const int64_t in_rank  = graph.dim_of(in);   // e.g. NCH or NCHW
-  const int64_t out_rank = graph.dim_of(out);  // should be in_rank + 1
-
-  VK_CHECK_COND(
-      in_rank < 4,
-      "Cannot unsqueeze a tensor with more than 3 dimensions (got %ld)",
-      in_rank);
-
-  // ------------------ axis value ------------------
-  int64_t dim = graph.extract_scalar<int64_t>(dim_ref);
-  // Handle negative dim the same way as PyTorch: ‑1 は最後尾
-  if (dim < 0) {
-    dim += out_rank;
-  }
-  VK_CHECK_COND(
-      dim >= 0 && dim <= out_rank,
-      "Unsqueeze axis %ld is out of bounds for rank %ld",
-      dim,
-      out_rank);
-
-  // ------------------ permutation vector ------------------
-  // shape before : [D0, D1, ... D(in_rank‑1)]
-  // after unsqueeze on `dim`: new axis length 1 is inserted at `dim`.
-  // To realiseこの変換 via Permute + Reshape trick used by Vulkan backend:
-  //   * First permute so that old axis order is shifted, 0 becomes `dim`.
-  //   * Then reshape inserts 1 at front (done inside Permute op).
-
-  std::vector<int64_t> permute_dims(static_cast<size_t>(out_rank));
-  // Example: in_rank=3, dim=2 → [1,2,0,3]
-  for (int i = 0; i < out_rank; ++i) {
-    if (i < dim) {
-      permute_dims[i] = i + 1;     // shift left part right by 1
-    } else if (i == dim) {
-      permute_dims[i] = 0;         // place original axis‑0 here
-    } else { // i > dim
-      permute_dims[i] = i;         // axes after `dim` keep same id
-    }
-  }
-
-  const ValueRef permute_dims_ref =
-      graph.add_scalar_list<int64_t>(std::move(permute_dims));
-
-  add_permute_node(graph, in, permute_dims_ref, out);
-}
-
-void unsqueeze(ComputeGraph& graph, const std::vector<ValueRef>& args) {
-  // args order: input, dim tensor, output
-  add_unsqueeze_node(graph, args[0], args[1], args[2]);
-}
-
-REGISTER_OPERATORS {
-  // aten.unsqueeze_copy.default maps to this Vulkan implementation
-  VK_REGISTER_OP(aten.unsqueeze_copy.default, unsqueeze);
-}
-
-} // namespace vkcompute
+aten.addmm.default
+aten.avg_pool2d.default
+aten.batch_norm.default
+aten.cat.default
+aten.clamp.default
+aten.clamp_min.default
+aten.conv2d.default
+aten.conv2d_depthwise.default
+aten.flatten.using_ints
+aten.gather.default
+aten.index.Tensor_out
+aten.instance_norm.default
+aten.layer_norm.default
+aten.leaky_relu.default
+aten.linear.default
+aten.matmul.default
+aten.max_pool2d.default
+aten.pad.default
+aten.permute.default
+aten.relu.default
+aten.reshape_copy.default
+aten.sigmoid.default
+aten.slice.Tensor
+aten.softmax.int
+aten.squeeze_copy.default
+aten.unsqueeze_copy.default
+aten.upsample_bilinear2d.vec
+aten.upsample_nearest2d.vec
