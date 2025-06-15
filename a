@@ -67,7 +67,7 @@ void add_unsqueeze_node(
   }
 
   const ValueRef permute_dims_ref =
-      graph.add_scalar_list<int64_t>(permute_dims);
+      graph.add_scalar_list<int64_t>(std::move(permute_dims));
 
   add_permute_node(graph, in, permute_dims_ref, out);
 }
