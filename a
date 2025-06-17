@@ -1,14 +1,23 @@
-# libpthreadpool.a の所在
-set(PTHREADPOOL_LIB "${CMAKE_SOURCE_DIR}/third_party/pthreadpool/build/libpthreadpool.a")
-set(PTHREADPOOL_INC "${CMAKE_SOURCE_DIR}/third_party/pthreadpool/include")
+B, C, *rest = real_stft.shape
+    # D1*D2*… を計算
+    flat = 1
+    for d in rest:
+        flat *= d
 
-add_library(pthreadpool STATIC IMPORTED GLOBAL)
+    # (B, C, rest...) → (B, C, flat)
+    real_flat = real_stft.view(B, C, flat)
+    imag_flat = imag_stft.view(B, C, flat)
 
-# ★Debug/Release の両方を同じファイルに向ける例
-set_target_properties(pthreadpool PROPERTIES
-    IMPORTED_LOCATION            "${PTHREADPOOL_LIB}"          # 共通指定でも可
-    IMPORTED_LOCATION_DEBUG      "${PTHREADPOOL_LIB}"
-    IMPORTED_LOCATION_RELEASE    "${PTHREADPOOL_LIB}"
-    IMPORTED_CONFIGURATIONS      "DEBUG;RELEASE"
-    INTERFACE_INCLUDE_DIRECTORIES "${PTHREADPOOL_INC}"
-)
+    # flip はチャンネル軸(1)のみで OK
+    real_rev = torch.flip(real_stft, dims=[1])[:, 1:-1].view(B, C-2, flat)
+    imag_rev = -torch.flip(imag_stft, dims=[1])[:, 1:-1].view(B, C-2, flat)
+
+    # ３次元で concat
+    full_real_flat = torch.cat((real_flat, real_rev), dim=1)  # (B, C+(C-2), flat)
+    full_imag_flat = torch.cat((imag_flat, imag_rev), dim=1)
+
+    # 元の多次元形状に戻す → (B, C+(C-2), D1, D2, …)
+    full_real_stft = full_real_flat.view(B, C + (C - 2), *rest)
+    full_imag_stft = full_imag_flat.view(B, C + (C - 2), *rest)
+
+    return full_real_stft, full_imag_stft
