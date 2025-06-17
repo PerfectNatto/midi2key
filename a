@@ -1,28 +1,14 @@
-aten.addmm.default
-aten.avg_pool2d.default
-aten.batch_norm.default
-aten.cat.default
-aten.clamp.default
-aten.clamp_min.default
-aten.conv2d.default
-aten.conv2d_depthwise.default
-aten.flatten.using_ints
-aten.gather.default
-aten.index.Tensor_out
-aten.instance_norm.default
-aten.layer_norm.default
-aten.leaky_relu.default
-aten.linear.default
-aten.matmul.default
-aten.max_pool2d.default
-aten.pad.default
-aten.permute.default
-aten.relu.default
-aten.reshape_copy.default
-aten.sigmoid.default
-aten.slice.Tensor
-aten.softmax.int
-aten.squeeze_copy.default
-aten.unsqueeze_copy.default
-aten.upsample_bilinear2d.vec
-aten.upsample_nearest2d.vec
+# libpthreadpool.a の所在
+set(PTHREADPOOL_LIB "${CMAKE_SOURCE_DIR}/third_party/pthreadpool/build/libpthreadpool.a")
+set(PTHREADPOOL_INC "${CMAKE_SOURCE_DIR}/third_party/pthreadpool/include")
+
+add_library(pthreadpool STATIC IMPORTED GLOBAL)
+
+# ★Debug/Release の両方を同じファイルに向ける例
+set_target_properties(pthreadpool PROPERTIES
+    IMPORTED_LOCATION            "${PTHREADPOOL_LIB}"          # 共通指定でも可
+    IMPORTED_LOCATION_DEBUG      "${PTHREADPOOL_LIB}"
+    IMPORTED_LOCATION_RELEASE    "${PTHREADPOOL_LIB}"
+    IMPORTED_CONFIGURATIONS      "DEBUG;RELEASE"
+    INTERFACE_INCLUDE_DIRECTORIES "${PTHREADPOOL_INC}"
+)
