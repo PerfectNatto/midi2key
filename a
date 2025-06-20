@@ -1,19 +1,27 @@
- B, F_half, T = real_stft.shape               # F_half = n_fft // 2 + 1
-    n_fft = 2 * (F_half - 1)                     # 完全長
+#include <executorch/runtime/runtime.h>
+#include <executorch/extension/runner_util/executor_runner.h>   // 静的ビルドで有効
+#include <executorch/extension/data_loader/file_data_loader.h>
 
-    # 出力バッファを確保（real と imag で dtype は同じなので new_empty を使用）
-    full_real = real_stft.new_empty(B, n_fft, T)
-    full_imag = imag_stft.new_empty(B, n_fft, T)
+extern "C"
+int run_pte(const char* pte_path) {
+    using namespace torch::executorch;
+    extension::FileDataLoader loader(pte_path);
+    auto maybe_program = runtime::load_program(std::move(loader));
+    if (!maybe_program.ok()) return -1;
 
-    # 正の周波数 (0 Hz〜ナイキスト) をコピー
-    full_real[:, :F_half, :] = real_stft
-    full_imag[:, :F_half, :] = imag_stft
+    auto program = std::move(*maybe_program);
+    runtime::Executor executor;
+    if (!executor.open(program).ok()) return -2;
 
-    # 負の周波数側を共役対称で埋める
-    mirror_real = torch.flip(real_stft[:, 1:-1, :], dims=[1])
-    mirror_imag = -torch.flip(imag_stft[:, 1:-1, :], dims=[1])
+    // 入力は例としてすべて 0 のバッファを渡す
+    float dummy_in[1 * 3 * 224 * 224] = {0};
+    extension::Tensor input = extension::from_blob(
+        dummy_in, {1, 3, 224, 224});
 
-    full_real[:, F_half:, :] = mirror_real
-    full_imag[:, F_half:, :] = mirror_imag
+    // method “forward” は XNNPACK で delegate 済みのはず
+    executor.set_input(0, input);
+    if (!executor.run().ok()) return -3;
 
-    return full_real, full_imag
+    auto out = executor.get_output(0);
+    return out.template const_data_ptr<float>()[0] > 0 ? 0 : 0;
+}
