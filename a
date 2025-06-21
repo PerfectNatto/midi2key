@@ -1,14 +1,33 @@
-# libpthreadpool.a の所在
-set(PTHREADPOOL_LIB "${CMAKE_SOURCE_DIR}/third_party/pthreadpool/build/libpthreadpool.a")
-set(PTHREADPOOL_INC "${CMAKE_SOURCE_DIR}/third_party/pthreadpool/include")
+#include <algorithm>                           // std::fill_n
+#include <executorch/aten/ATen.h>              // TensorImpl
+#include <executorch/runtime/runtime.h>        // Method
+#include <executorch/runtime/result.h>         // Error / Result
+#include <executorch/aten/span.h>              // Span helpers
 
-add_library(pthreadpool STATIC IMPORTED GLOBAL)
+using executorch::aten::Tensor;
+using executorch::aten::TensorImpl;
+using executorch::runtime::Error;
+using executorch::runtime::Method;
 
-# ★Debug/Release の両方を同じファイルに向ける例
-set_target_properties(pthreadpool PROPERTIES
-    IMPORTED_LOCATION            "${PTHREADPOOL_LIB}"          # 共通指定でも可
-    IMPORTED_LOCATION_DEBUG      "${PTHREADPOOL_LIB}"
-    IMPORTED_LOCATION_RELEASE    "${PTHREADPOOL_LIB}"
-    IMPORTED_CONFIGURATIONS      "DEBUG;RELEASE"
-    INTERFACE_INCLUDE_DIRECTORIES "${PTHREADPOOL_INC}"
-)
+// --- 1. 入力データを用意 --------------------------------------------------
+static float in[1 * 2 * 44100];
+std::fill_n(in, 1 * 2 * 44100, 1.0f);          // 全要素 1.0f
+
+// --- 2. Tensor を作成 (from_blob 相当) ------------------------------------
+Tensor::SizesType sizes[]    = {1, 2, 44100};
+Tensor::DimOrderType order   = {0, 1, 2};      // そのまま
+TensorImpl impl(
+    executorch::aten::ScalarType::Float,
+    3,                                          // 次元数
+    sizes,
+    in,                                         // データポインタ
+    order);
+Tensor input(&impl);                            // 暗黙で EValue 化可
+
+// --- 3. Method に入力をセット --------------------------------------------
+Method* method = /* 既に load_method() 済みのポインタ */;
+Error e = method->set_input(input, 0);          // 第0引数に設定
+if (e != Error::Ok) return -1;                 // 失敗時は適宜処理
+
+// --- 4. 推論実行 -----------------------------------------------------------
+e = method->execute();  
