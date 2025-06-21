@@ -1,27 +1,14 @@
-#include <executorch/runtime/runtime.h>
-#include <executorch/extension/runner_util/executor_runner.h>   // 静的ビルドで有効
-#include <executorch/extension/data_loader/file_data_loader.h>
+# libpthreadpool.a の所在
+set(PTHREADPOOL_LIB "${CMAKE_SOURCE_DIR}/third_party/pthreadpool/build/libpthreadpool.a")
+set(PTHREADPOOL_INC "${CMAKE_SOURCE_DIR}/third_party/pthreadpool/include")
 
-extern "C"
-int run_pte(const char* pte_path) {
-    using namespace torch::executorch;
-    extension::FileDataLoader loader(pte_path);
-    auto maybe_program = runtime::load_program(std::move(loader));
-    if (!maybe_program.ok()) return -1;
+add_library(pthreadpool STATIC IMPORTED GLOBAL)
 
-    auto program = std::move(*maybe_program);
-    runtime::Executor executor;
-    if (!executor.open(program).ok()) return -2;
-
-    // 入力は例としてすべて 0 のバッファを渡す
-    float dummy_in[1 * 3 * 224 * 224] = {0};
-    extension::Tensor input = extension::from_blob(
-        dummy_in, {1, 3, 224, 224});
-
-    // method “forward” は XNNPACK で delegate 済みのはず
-    executor.set_input(0, input);
-    if (!executor.run().ok()) return -3;
-
-    auto out = executor.get_output(0);
-    return out.template const_data_ptr<float>()[0] > 0 ? 0 : 0;
-}
+# ★Debug/Release の両方を同じファイルに向ける例
+set_target_properties(pthreadpool PROPERTIES
+    IMPORTED_LOCATION            "${PTHREADPOOL_LIB}"          # 共通指定でも可
+    IMPORTED_LOCATION_DEBUG      "${PTHREADPOOL_LIB}"
+    IMPORTED_LOCATION_RELEASE    "${PTHREADPOOL_LIB}"
+    IMPORTED_CONFIGURATIONS      "DEBUG;RELEASE"
+    INTERFACE_INCLUDE_DIRECTORIES "${PTHREADPOOL_INC}"
+)
