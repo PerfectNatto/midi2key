@@ -1,46 +1,15 @@
-class NativeSeparator {
-    executorch::extension::FileDataLoader loader;
-    executorch::runtime::Program      program;
-
-    // これらをメンバとして保持
-    MemoryAllocator   method_allocator;
-    MemoryAllocator   temp_allocator;
-    std::vector<Span<uint8_t>> planned_spans;
-    HierarchicalAllocator planned_memory;
-    executorch::runtime::MemoryManager memmgr;
-
-    executorch::runtime::Method       method;
-
-public:
-    NativeSeparator(const std::string& modelPath)
-      : loader(FileDataLoader::from(modelPath.c_str()).get())
-      , program(Program::load(&loader).get())
-      // プール配列はグローバル/static のまま利用
-      , method_allocator(sizeof(method_allocator_pool), method_allocator_pool)
-      , temp_allocator   (sizeof(temp_allocator_pool),    temp_allocator_pool)
-      // planned_spans を埋めるループはここで実行
-      , planned_spans([&]{
-            Result<MethodMeta> meta = program.method_meta("forward");
-            size_t n = meta->num_memory_planned_buffers();
-            std::vector<Span<uint8_t>> v;
-            v.reserve(n);
-            for (size_t i = 0; i < n; ++i) {
-                size_t sz = static_cast<size_t>(meta->memory_planned_buffer_size(i).get());
-                auto buf = std::make_unique<uint8_t[]>(sz);
-                planned_buffers_.push_back(std::move(buf));  // 所有
-                v.push_back({planned_buffers_.back().get(), sz});
-            }
-            return v;
-        }())
-      , planned_memory(planned_spans.data(), planned_spans.size())
-      , memmgr(&method_allocator, &planned_memory, &temp_allocator)
-      , method(program.load_method("forward", &memmgr).get())
-    {}
-
-    void predict(StereoFrame* data) {
-        // buf 作って set_input→execute→fetch の流れ
-    }
-
-private:
-    std::vector<std::unique_ptr<uint8_t[]>> planned_buffers_;
-};
+float buf[1*2*44100];
+        for (int i = 0; i < 44100; ++i) {
+          buf[2*i]   = data[i].left;
+          buf[2*i+1] = data[i].right;
+        }
+        auto input = executorch::extension::make_tensor_ptr(
+                       {1,2,44100}, buf,
+                       executorch::aten::ScalarType::Float);
+        method.set_input(input, 0);
+        method.execute();
+        auto out = method.get_output(0).toTensor().const_data_ptr<float>();
+        for (int i = 0; i < 44100; ++i) {
+          data[i].left  = out[2*i];
+          data[i].right = out[2*i+1];
+        }
