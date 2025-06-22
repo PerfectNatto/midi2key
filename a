@@ -1,6 +1,44 @@
-static float buf[1 * 2 * 44100];
-std::fill_n(buf, 1 * 2 * 44100, 1.0f);
-auto input = executorch::extension::make_tensor_ptr({1, 2, 44100}, buf,
-                                                   executorch::aten::ScalarType::Float);
-method.set_input(input, 0);
-method.execute();
+#include <executorch/extension/data_loader/file_data_loader.h>
+#include <executorch/runtime/runtime.h>
+#include <executorch/extension/tensor/tensor.h>
+
+class Runner {
+    executorch::extension::FileDataLoader loader;
+    executorch::runtime::Program      program;
+    executorch::runtime::MemoryManager memmgr;  // 必要なら自前メモリ管理
+    executorch::runtime::Method       method;
+
+public:
+    Runner(const char* modelPath)
+      : loader(
+          executorch::extension::FileDataLoader::from(modelPath).get()
+        )
+      , program(
+          executorch::runtime::Program::load(&loader).get()
+        )
+      , method(
+          program.load_method(
+            "forward",
+            &memmgr       // nullptr でも可→内部で et_pal_allocate() を使う
+          ).get()
+        )
+    {}
+
+    void run(StereoFrame* data) {
+        float buf[1*2*44100];
+        for (int i = 0; i < 44100; ++i) {
+          buf[2*i]   = data[i].left;
+          buf[2*i+1] = data[i].right;
+        }
+        auto input = executorch::extension::make_tensor_ptr(
+                       {1,2,44100}, buf,
+                       executorch::aten::ScalarType::Float);
+        method.set_input(input, 0);
+        method.execute();
+        auto out = method.get_output(0).toTensor().const_data_ptr<float>();
+        for (int i = 0; i < 44100; ++i) {
+          data[i].left  = out[2*i];
+          data[i].right = out[2*i+1];
+        }
+    }
+};
