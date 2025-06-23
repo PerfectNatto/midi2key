@@ -1,15 +1,29 @@
-float buf[1*2*44100];
-        for (int i = 0; i < 44100; ++i) {
-          buf[2*i]   = data[i].left;
-          buf[2*i+1] = data[i].right;
-        }
-        auto input = executorch::extension::make_tensor_ptr(
-                       {1,2,44100}, buf,
-                       executorch::aten::ScalarType::Float);
-        method.set_input(input, 0);
-        method.execute();
-        auto out = method.get_output(0).toTensor().const_data_ptr<float>();
-        for (int i = 0; i < 44100; ++i) {
-          data[i].left  = out[2*i];
-          data[i].right = out[2*i+1];
-        }
+void run(StereoFrame* data) {
+    // StereoFrame が float[2] だけで構成されることを保証
+    static_assert(sizeof(StereoFrame) == 2 * sizeof(float),
+                  "StereoFrame にパディングが入っている可能性があります");
+
+    // data の先頭アドレスを float* にキャスト
+    float* ptr = reinterpret_cast<float*>(data);
+
+    // 入力テンソルを生成（batch=1, channel=2, samples=44100）、ストライドを指定
+    auto input = executorch::extension::for_blob(
+                     ptr,
+                     {1, 2, 44100},
+                     executorch::aten::ScalarType::Float)
+                     .strides({2 * 44100, 1, 2})
+                     .make_tensor_ptr();
+
+    // モデル実行
+    method.set_input(input, 0);
+    method.execute();
+
+    // 出力テンソルを取得
+    auto out_tensor = method.get_output(0).toTensor();
+
+    // 出力データのポインタを取得
+    const float* out_ptr = out_tensor.const_data_ptr<float>();
+
+    // data 配列に一括コピー（LRLR… インターリーブのまま）
+    std::memcpy(ptr, out_ptr, sizeof(float) * 2 * 44100);
+}
