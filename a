@@ -1,30 +1,35 @@
-def fold_overlap_add_idx(
-    frames: torch.Tensor,        # (B, win_length, n_frames)
+def fold_overlap_add(
+    frames: torch.Tensor,        # (B, win_length, n_frames)  ※C=1 を仮定
     win_length: int,
     hop_length: int,
     output_samples: int,
 ) -> torch.Tensor:
     """
-    1-D Fold と同値の Overlap-Add。
-    依存演算: aten.index_add / arange / view / transpose など
-              →  graph に aten.add.Tensor は現れない
+    torch.nn.functional.fold(…, kernel_size=(1, win_length), stride=(1, hop_length))
+    と同一の 1-D オーバーラップ加算を行う。
+    返り値は (B, 1, 1, output_samples)。
     """
-
-    # ---- (B, K, T) → (B, T, K) ------------------------------------------
-    frames = frames.transpose(1, 2).contiguous()
+    # --- 前処理 ------------------------------------------------------------
+    # frames : (B, win_length, n_frames) → (B, n_frames, win_length)
+    frames = frames.transpose(1, 2).contiguous()        # (B, n_frames, K)
     B, T, K = frames.shape
-    assert K == win_length, "win_length mismatch"
+    assert K == win_length, "win_length とテンソル形状が不一致です"
 
-    # ---- 出力バッファ -----------------------------------------------------
-    y = torch.zeros(B, output_samples, dtype=frames.dtype,
-                    device=frames.device)
+    # --- 空の出力バッファ ---------------------------------------------------
+    y = torch.zeros(B, output_samples, dtype=frames.dtype, device=frames.device)
 
-    # ---- 1-D インデックス -------------------------------------------------
-    base = torch.arange(T, device=frames.device) * hop_length      # (T,)
-    idx  = (base[:, None] + torch.arange(K, device=frames.device)) # (T, K)
-    idx  = idx.flatten()                                           # (T·K,)
+    # --- 加算位置を一次元 index でまとめて作成 -----------------------------
+    # idx[t, k] = t*hop + k
+    base = torch.arange(T, device=frames.device) * hop_length          # (T,)
+    idx  = (base.unsqueeze(1) + torch.arange(K, device=frames.device)) # (T, K)
+    idx  = idx.flatten()                                               # (T*K,)
 
-    # ---- index_add_ で重なり加算 -----------------------------------------
-    y.index_add_(1, idx, frames.reshape(B, -1))                    # aten.index_add_
+    # --- バッチごとに一括 index_add_(dim=1) -------------------------------
+    y.index_add_(                                                        # aten::index_add
+        1,                                                               # dim=1
+        idx,                                                             # 位置 (重複可)
+        frames.reshape(B, -1)                                            # 値
+    )
 
+    # --- Fold と同じ 4-D 形状に整形 ---------------------------------------
     return y.view(B, 1, 1, -1)
