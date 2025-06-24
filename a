@@ -1,33 +1,34 @@
-def fold_overlap_add_idx_norange(
-    frames: torch.Tensor,        # (B, win_length, n_frames)
+    frames: torch.Tensor,        # (B, win_length, n_frames)  ※C=1 を仮定
     win_length: int,
     hop_length: int,
     output_samples: int,
 ) -> torch.Tensor:
     """
-    • arange を一切使わない 1-D Overlap-Add
-    • 依存演算子: aten.ones / aten.cumsum / aten.add / aten.mul / aten.index_add
-      （すべて Vulkan デリゲート対応）
+    torch.nn.functional.fold(…, kernel_size=(1, win_length), stride=(1, hop_length))
+    と同一の 1-D オーバーラップ加算を行う。
+    返り値は (B, 1, 1, output_samples)。
     """
-    # (B, K, T) → (B, T, K)
-    frames = frames.transpose(1, 2).contiguous()
+    # --- 前処理 ------------------------------------------------------------
+    # frames : (B, win_length, n_frames) → (B, n_frames, win_length)
+    frames = frames.transpose(1, 2).contiguous()        # (B, n_frames, K)
     B, T, K = frames.shape
+    assert K == win_length, "win_length とテンソル形状が不一致です"
 
-    # ---- 0..T-1 を生成（arange なし） -------------------------------
-    base = torch.ones(T, dtype=torch.int64, device=frames.device)
-    base = base.cumsum(0) - 1                          # (T,) 0,1,2,…
+    # --- 空の出力バッファ ---------------------------------------------------
+    y = torch.zeros(B, output_samples, dtype=frames.dtype, device=frames.device)
 
-    # ---- 0..K-1 を生成（arange なし） -------------------------------
-    kernel_idx = torch.ones(K, dtype=torch.int64, device=frames.device)
-    kernel_idx = kernel_idx.cumsum(0) - 1              # (K,)
+    # --- 加算位置を一次元 index でまとめて作成 -----------------------------
+    # idx[t, k] = t*hop + k
+    base = torch.arange(T, device=frames.device) * hop_length          # (T,)
+    idx  = (base.unsqueeze(1) + torch.arange(K, device=frames.device)) # (T, K)
+    idx  = idx.flatten()                                               # (T*K,)
 
-    # ---- 出力インデックス idx[t, k] = t*hop + k ---------------------
-    idx = (base[:, None] * hop_length + kernel_idx)    # (T, K)
-    idx = idx.flatten()                                # (T*K,)
+    # --- バッチごとに一括 index_add_(dim=1) -------------------------------
+    y.index_add_(                                                        # aten::index_add
+        1,                                                               # dim=1
+        idx,                                                             # 位置 (重複可)
+        frames.reshape(B, -1)                                            # 値
+    )
 
-    # ---- Overlap-Add -------------------------------------------------
-    y = torch.zeros(B, output_samples, device=frames.device,
-                    dtype=frames.dtype)
-    y = torch.index_add(y, 1, idx, frames.reshape(B, -1))  # aten.index_add
-
+    # --- Fold と同じ 4-D 形状に整形 ---------------------------------------
     return y.view(B, 1, 1, -1)
