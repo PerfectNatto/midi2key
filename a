@@ -1,29 +1,35 @@
-void run(StereoFrame* data) {
-    // StereoFrame が float[2] だけで構成されることを保証
-    static_assert(sizeof(StereoFrame) == 2 * sizeof(float),
-                  "StereoFrame にパディングが入っている可能性があります");
+def fold_overlap_add(
+    frames: torch.Tensor,        # (B, win_length, n_frames)  ※C=1 を仮定
+    win_length: int,
+    hop_length: int,
+    output_samples: int,
+) -> torch.Tensor:
+    """
+    torch.nn.functional.fold(…, kernel_size=(1, win_length), stride=(1, hop_length))
+    と同一の 1-D オーバーラップ加算を行う。
+    返り値は (B, 1, 1, output_samples)。
+    """
+    # --- 前処理 ------------------------------------------------------------
+    # frames : (B, win_length, n_frames) → (B, n_frames, win_length)
+    frames = frames.transpose(1, 2).contiguous()        # (B, n_frames, K)
+    B, T, K = frames.shape
+    assert K == win_length, "win_length とテンソル形状が不一致です"
 
-    // data の先頭アドレスを float* にキャスト
-    float* ptr = reinterpret_cast<float*>(data);
+    # --- 空の出力バッファ ---------------------------------------------------
+    y = torch.zeros(B, output_samples, dtype=frames.dtype, device=frames.device)
 
-    // 入力テンソルを生成（batch=1, channel=2, samples=44100）、ストライドを指定
-    auto input = executorch::extension::for_blob(
-                     ptr,
-                     {1, 2, 44100},
-                     executorch::aten::ScalarType::Float)
-                     .strides({2 * 44100, 1, 2})
-                     .make_tensor_ptr();
+    # --- 加算位置を一次元 index でまとめて作成 -----------------------------
+    # idx[t, k] = t*hop + k
+    base = torch.arange(T, device=frames.device) * hop_length          # (T,)
+    idx  = (base.unsqueeze(1) + torch.arange(K, device=frames.device)) # (T, K)
+    idx  = idx.flatten()                                               # (T*K,)
 
-    // モデル実行
-    method.set_input(input, 0);
-    method.execute();
+    # --- バッチごとに一括 index_add_(dim=1) -------------------------------
+    y.index_add_(                                                        # aten::index_add
+        1,                                                               # dim=1
+        idx,                                                             # 位置 (重複可)
+        frames.reshape(B, -1)                                            # 値
+    )
 
-    // 出力テンソルを取得
-    auto out_tensor = method.get_output(0).toTensor();
-
-    // 出力データのポインタを取得
-    const float* out_ptr = out_tensor.const_data_ptr<float>();
-
-    // data 配列に一括コピー（LRLR… インターリーブのまま）
-    std::memcpy(ptr, out_ptr, sizeof(float) * 2 * 44100);
-}
+    # --- Fold と同じ 4-D 形状に整形 ---------------------------------------
+    return y.view(B, 1, 1, -1)
