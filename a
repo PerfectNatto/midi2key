@@ -1,27 +1,33 @@
-def fold_overlap_add_no_add(
-    frames: torch.Tensor,          # (B, win_length, n_frames)  ※C=1 を仮定
+def fold_overlap_add_mm(
+    frames: torch.Tensor,        # (B, win_length, n_frames)  C==1想定
     win_length: int,
     hop_length: int,
     output_samples: int,
 ) -> torch.Tensor:
     """
-    torch.nn.functional.fold と同じ 1-D オーバーラップ加算を
-    `aten.scatter_add` だけで実装する。
-    返り値は (B, 1, 1, output_samples)。
+    依存演算: aten.mm / view / permute / arange など
+    Fold と同じく重なり部分は「総和」（平均化しない）。
+    戻り値: (B, 1, 1, output_samples)
     """
-
-    # (B, win_length, n_frames) → (B, n_frames, win_length)
-    frames = frames.transpose(1, 2).contiguous()                 # (B, T, K)
+    # --- 形状変換 -----------------------------------------------------------
+    # (B, K, T) → (B, T, K) → (B, T*K)
+    frames = frames.transpose(1, 2).contiguous()
     B, T, K = frames.shape
-    assert K == win_length, "win_length とテンソル形状が不一致です"
+    assert K == win_length
+    x = frames.reshape(B, T * K)                # (B, TK)
 
-    # 出力位置インデックス idx[t, k] = t*hop + k
-    base = torch.arange(T, device=frames.device) * hop_length    # (T,)
-    idx  = (base.unsqueeze(1) + torch.arange(K, device=frames.device))  # (T, K)
-    idx  = idx.flatten().unsqueeze(0).expand(B, -1)              # (B, T*K)
+    # --- 0/1 マッピング行列 生成 -------------------------------------------
+    # 行: TK (= 各フレーム内のサンプル) / 列: 出力サンプル
+    device = frames.device
+    idx_base = torch.arange(T, device=device) * hop_length      # (T,)
+    idx = (idx_base[:, None] + torch.arange(K, device=device))  # (T, K)
+    idx_flat = idx.flatten()                                    # (TK,)
 
-    # scatter_add で重複位置をそのまま加算
-    y = torch.zeros(B, output_samples, dtype=frames.dtype, device=frames.device)
-    y = y.scatter_add(1, idx, frames.reshape(B, -1))             # aten.scatter_add
+    M = torch.zeros(T * K, output_samples,
+                    dtype=frames.dtype, device=device)          # (TK, L_out)
+    M[torch.arange(T * K, device=device), idx_flat] = 1.0       # 1 を配置
 
-    return y.view(B, 1, 1, -1)
+    # --- 行列乗算 (aten.mm) で一括加算 -------------------------------------
+    y = x @ M                                                   # (B, L_out)
+
+    return y.view(B, 1, 1, -1) 
