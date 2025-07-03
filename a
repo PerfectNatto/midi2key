@@ -1,34 +1,25 @@
-    frames: torch.Tensor,        # (B, win_length, n_frames)  ※C=1 を仮定
-    win_length: int,
-    hop_length: int,
-    output_samples: int,
-) -> torch.Tensor:
-    """
-    torch.nn.functional.fold(…, kernel_size=(1, win_length), stride=(1, hop_length))
-    と同一の 1-D オーバーラップ加算を行う。
-    返り値は (B, 1, 1, output_samples)。
-    """
-    # --- 前処理 ------------------------------------------------------------
-    # frames : (B, win_length, n_frames) → (B, n_frames, win_length)
-    frames = frames.transpose(1, 2).contiguous()        # (B, n_frames, K)
-    B, T, K = frames.shape
-    assert K == win_length, "win_length とテンソル形状が不一致です"
+import numpy as np
+import onnxruntime as ort
 
-    # --- 空の出力バッファ ---------------------------------------------------
-    y = torch.zeros(B, output_samples, dtype=frames.dtype, device=frames.device)
+# 1) セッションの作成
+#    providers によってバックエンドを選択。GPU(CUDA)を使う場合は "CUDAExecutionProvider" を、
+#    CPU のみなら "CPUExecutionProvider" を指定します。
+session = ort.InferenceSession("model.onnx",
+    providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+)
 
-    # --- 加算位置を一次元 index でまとめて作成 -----------------------------
-    # idx[t, k] = t*hop + k
-    base = torch.arange(T, device=frames.device) * hop_length          # (T,)
-    idx  = (base.unsqueeze(1) + torch.arange(K, device=frames.device)) # (T, K)
-    idx  = idx.flatten()                                               # (T*K,)
+# 2) 入力名・出力名の取得
+input_name  = session.get_inputs()[0].name
+output_name = session.get_outputs()[0].name
 
-    # --- バッチごとに一括 index_add_(dim=1) -------------------------------
-    y.index_add_(                                                        # aten::index_add
-        1,                                                               # dim=1
-        idx,                                                             # 位置 (重複可)
-        frames.reshape(B, -1)                                            # 値
-    )
+# 3) 入力データの用意 (例: 1x3x224x224 のランダムテンソル)
+#    実際は前処理済みの NumPy 配列を渡します。
+input_array = np.random.rand(1, 3, 224, 224).astype(np.float32)
 
-    # --- Fold と同じ 4-D 形状に整形 ---------------------------------------
-    return y.view(B, 1, 1, -1)
+# 4) 推論実行
+#    run の第1引数には出力名のリスト、第2引数に {入力名: データ} の dict を与えます。
+outputs = session.run([output_name], {input_name: input_array})
+
+# 5) 結果の取得
+pred = outputs[0]  # NumPy 配列で返ってきます
+print(pred.shape)
