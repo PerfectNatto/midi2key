@@ -1,23 +1,6 @@
-import csv
-import json
-
-def csv_to_json(csv_filepath: str, json_filepath: str, encoding: str = 'utf-8') -> None:
-    """
-    CSV ファイルを読み込み、JSON ファイルとして出力する関数。
-
-    :param csv_filepath: 入力する CSV ファイルのパス
-    :param json_filepath: 出力する JSON ファイルのパス
-    :param encoding: ファイルの文字エンコーディング（デフォルト: 'utf-8'）
-    """
-    with open(csv_filepath, mode='r', encoding=encoding, newline='') as csv_file:
-        reader = csv.DictReader(csv_file)
-        rows = list(reader)
-
-    with open(json_filepath, mode='w', encoding=encoding) as json_file:
-        json.dump(rows, json_file, ensure_ascii=False, indent=2)
-
-if __name__ == '__main__':
-    # 例:
-    # input.csv を読み込み、output.json として保存します。
-    csv_to_json('input.csv', 'output.json')
-    print('CSV を JSON に変換しました。')
+./build.sh --config Release --build_shared_lib \
+    --android \
+    --android_sdk_path /path/to/Android \
+    --android_ndk_path /path/to/Android/ndk/<NDK version> \
+    --android_abi arm64-v8a \
+    --android_api 21
