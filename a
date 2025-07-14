@@ -1,12 +1,9 @@
-F = real_stft.size(1)                               # 周波数ビン数（定数でトレースされる）
+ _, n_freq, _ = real_stft.shape        # ← ここで周波数ビン数を取得
 
-idx = torch.arange(F - 2, 0, -1,                     # [F-2, … , 1]
-                   device=real_stft.device, dtype=torch.long)
+    # --- 周波数軸を逆順に並べ替える（1〜n_freq-2） ---
+    rev_real_slices = [real_stft[:, i:i+1, :] for i in range(n_freq - 2, 0, -1)]
+    rev_imag_slices = [imag_stft[:, i:i+1, :] for i in range(n_freq - 2, 0, -1)]
 
-# ==== real 部 ====
-rev_real       = real_stft.index_select(1, idx)      # Gather 相当
-full_real_stft = torch.cat((real_stft, rev_real), dim=1)
-
-# ==== imag 部 ====
-rev_imag       = imag_stft.index_select(1, idx)
-full_imag_stft = torch.cat((imag_stft, -rev_imag), dim=1)  # UnaryOp(neg) + Concat
+    # --- 連結（Concat） ---
+    full_real_stft = torch.cat([real_stft] + rev_real_slices, dim=1)
+    full_imag_stft = torch.cat([imag_stft] + [-s for s in rev_imag_slices], dim=1)
