@@ -1,9 +1,23 @@
- _, n_freq, _ = real_stft.shape        # ← ここで周波数ビン数を取得
+    const char* p = env->GetStringUTFChars(jPath, nullptr);
+    std::string path(p);  env->ReleaseStringUTFChars(jPath, p);
 
-    # --- 周波数軸を逆順に並べ替える（1〜n_freq-2） ---
-    rev_real_slices = [real_stft[:, i:i+1, :] for i in range(n_freq - 2, 0, -1)]
-    rev_imag_slices = [imag_stft[:, i:i+1, :] for i in range(n_freq - 2, 0, -1)]
+    float in[4];  env->GetFloatArrayRegion(jIn, 0, 4, in);
 
-    # --- 連結（Concat） ---
-    full_real_stft = torch.cat([real_stft] + rev_real_slices, dim=1)
-    full_imag_stft = torch.cat([imag_stft] + [-s for s in rev_imag_slices], dim=1)
+    static Ort::Env ort(ORT_LOGGING_LEVEL_WARNING, "ort");
+    Ort::SessionOptions opts;
+    Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Nnapi(opts, 0));  // ← NNAPI
+
+    Ort::Session session(ort, path.c_str(), opts);
+
+    constexpr int64_t dims[2] = {1, 4};
+    Ort::MemoryInfo mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    Ort::Value x = Ort::Value::CreateTensor<float>(mem, in, 4, dims, 2);
+
+    const char* in_names[]  = {"input"};
+    const char* out_names[] = {"output"};
+    auto y = session.Run(Ort::RunOptions{nullptr}, in_names, &x, 1, out_names, 1);
+
+    float* out = y[0].GetTensorMutableData<float>();
+    jfloatArray ret = env->NewFloatArray(4);
+    env->SetFloatArrayRegion(ret, 0, 4, out);
+    return ret;
