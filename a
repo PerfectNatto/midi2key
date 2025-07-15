@@ -1,6 +1,46 @@
-Ort::AllocatorWithDefaultOptions alloc;
-size_t n = session.GetInputCount();                    // 入力数を取得
-for (size_t i = 0; i < n; ++i) {
-    auto name = session.GetInputNameAllocated(i, alloc);  // ← ここで入力名を取得
-    std::printf("Input %zu name = %s\n", i, name.get());  // name は自動解放される
+public:
+    explicit ORTSessionWrapper(const std::string& model_path);
+
+    // 入力配列（float 88 200 要素）を渡して推論を実行し，出力を返す
+    std::vector<float> run(const float* input);
+
+private:
+    static Ort::Env env_;                             // プロセス内で 1 個だけ
+    Ort::Session     session_;                        // モデルごとのセッション
+    Ort::MemoryInfo  mem_;                            // CPU メモリ情報（再利用用）
+
+    static constexpr std::array<int64_t, 3> kShape{1, 2, 44100};
+    static constexpr size_t kElemCount = 1 * 2 * 44100; // = 88,200
+};
+
+/* -------- 実装部 -------- */
+
+Ort::Env ORTSessionWrapper::env_{ORT_LOGGING_LEVEL_WARNING, "ort"};
+
+ORTSessionWrapper::ORTSessionWrapper(const std::string& model_path)
+    : mem_{Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)}
+{
+    Ort::SessionOptions opts;
+    // NNAPI Execution Provider を追加
+    Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Nnapi(opts, 0));
+    session_ = Ort::Session(env_, model_path.c_str(), opts);
+}
+
+std::vector<float> ORTSessionWrapper::run(const float* input)
+{
+    // 入力テンソル生成（コピーなし。const_cast は ONNX Runtime 仕様のため）
+    Ort::Value in_tensor = Ort::Value::CreateTensor<float>(
+        mem_, const_cast<float*>(input), kElemCount,
+        kShape.data(), kShape.size());
+
+    const char* in_names[]  = {"input"};
+    const char* out_names[] = {"output"};
+
+    auto outs = session_.Run(Ort::RunOptions{nullptr},
+                             in_names, &in_tensor, 1,
+                             out_names, 1);
+
+    float* out_data = outs[0].GetTensorMutableData<float>();
+    size_t out_cnt  = outs[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    return std::vector<float>(out_data, out_data + out_cnt);  // 実データをコピーして返却
 }
