@@ -1,3 +1,6 @@
-std::array<int64_t, 3> shape{1, 2, 44100};
-  size_t elem_count = 1 * 2 * 44100;               // = 88 200
-  std::vector<float> input(elem_count, 1.0f);
+Ort::AllocatorWithDefaultOptions alloc;
+size_t n = session.GetInputCount();                    // 入力数を取得
+for (size_t i = 0; i < n; ++i) {
+    auto name = session.GetInputNameAllocated(i, alloc);  // ← ここで入力名を取得
+    std::printf("Input %zu name = %s\n", i, name.get());  // name は自動解放される
+}
