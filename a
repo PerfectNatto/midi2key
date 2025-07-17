@@ -1,41 +1,30 @@
-class ORTModel {
-public:
-    explicit ORTModel(const std::string& model_path)
-        : env_(ORT_LOGGING_LEVEL_WARNING, "ort"),
-          mem_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault))
-    {
-        // NNAPI Execution Provider を追加
-        Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Nnapi(opts_, 0));
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
 
-        // セッション生成
-        session_ = Ort::Session(env_, model_path.c_str(), opts_);
+import com.google.android.gms.tasks.Task;
+import com.google.android.play.core.review.ReviewInfo;
+import com.google.android.play.core.review.ReviewManager;
+import com.google.android.play.core.review.ReviewManagerFactory;
+
+public class MainActivity extends AppCompatActivity {
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        // setContentView(...) は任意
+        showReviewDialog();          // 好きなタイミングで呼ぶ
     }
 
-    // 88 200 要素の入力 -> 出力ベクタを返す
-    std::vector<float> run(const float* input) {
-        constexpr std::array<int64_t, 3> shape{1, 2, 44100};
-        constexpr size_t elem_count = 1 * 2 * 44100;
-
-        Ort::Value tensor = Ort::Value::CreateTensor<float>(
-            mem_, const_cast<float*>(input), elem_count,
-            shape.data(), shape.size());
-
-        const char* in_names[]  = {"input"};
-        const char* out_names[] = {"output"};
-
-        auto outs = session_.Run(Ort::RunOptions{nullptr},
-                                 in_names, &tensor, 1,
-                                 out_names, 1);
-
-        float* out_data = outs[0].GetTensorMutableData<float>();
-        size_t out_cnt  = outs[0].GetTensorTypeAndShapeInfo().GetElementCount();
-
-        return std::vector<float>(out_data, out_data + out_cnt);  // コピーして返却
+    /** 最小構成：これだけで完結 */
+    private void showReviewDialog() {
+        ReviewManager manager = ReviewManagerFactory.create(this);      // Context OK
+        Task<ReviewInfo> request = manager.requestReviewFlow();         // 非同期取得
+        request.addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                ReviewInfo info = task.getResult();
+                manager.launchReviewFlow(this, info);                   // Activity 必須
+            }
+            /* task.isSuccessful() が false の場合は何もしなくてよい */
+        });
     }
-
-private:
-    Ort::Env          env_;
-    Ort::SessionOptions opts_;
-    Ort::Session      session_{nullptr};
-    Ort::MemoryInfo   mem_;
-};
+}
