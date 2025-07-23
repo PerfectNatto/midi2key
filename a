@@ -1,30 +1,11 @@
-import android.os.Bundle;
-import androidx.appcompat.app.AppCompatActivity;
+@import StoreKit;
 
-import com.google.android.gms.tasks.Task;
-import com.google.android.play.core.review.ReviewInfo;
-import com.google.android.play.core.review.ReviewManager;
-import com.google.android.play.core.review.ReviewManagerFactory;
-
-public class MainActivity extends AppCompatActivity {
-
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        // setContentView(...) は任意
-        showReviewDialog();          // 好きなタイミングで呼ぶ
-    }
-
-    /** 最小構成：これだけで完結 */
-    private void showReviewDialog() {
-        ReviewManager manager = ReviewManagerFactory.create(this);      // Context OK
-        Task<ReviewInfo> request = manager.requestReviewFlow();         // 非同期取得
-        request.addOnCompleteListener(task -> {
-            if (task.isSuccessful()) {
-                ReviewInfo info = task.getResult();
-                manager.launchReviewFlow(this, info);                   // Activity 必須
-            }
-            /* task.isSuccessful() が false の場合は何もしなくてよい */
-        });
+- (void)requestReviewIfAppropriate {
+    if (@available(iOS 10.3, *)) {
+        UIWindowScene *scene = (UIWindowScene *)[UIApplication.sharedApplication.connectedScenes.anyObject
+            isKindOfClass:UIWindowScene.class] ? UIApplication.sharedApplication.connectedScenes.anyObject : nil;
+        if (scene) {
+            [SKStoreReviewController requestReviewInScene:scene];
+        }
     }
 }
