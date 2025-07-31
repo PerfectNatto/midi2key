@@ -1,11 +1,16 @@
-@import StoreKit;
+# ───────── 元の形状:  (B, S, C, Fr, T)
+B, S, C, Fr, T = m.shape
 
-- (void)requestReviewIfAppropriate {
-    if (@available(iOS 10.3, *)) {
-        UIWindowScene *scene = (UIWindowScene *)[UIApplication.sharedApplication.connectedScenes.anyObject
-            isKindOfClass:UIWindowScene.class] ? UIApplication.sharedApplication.connectedScenes.anyObject : nil;
-        if (scene) {
-            [SKStoreReviewController requestReviewInScene:scene];
-        }
-    }
-}
+# (1) バッチをまとめて 4D へ
+m = m.view(B * S, C, Fr, T)           # -> (B*S, C, Fr, T)
+
+# (2) 実部/虚部を分けるために 5D へ (permute は行わない)
+m = m.view(B * S, -1, 2, Fr, T)       # -> (B*S, C//2, 2, Fr, T)
+
+# (3) 軸 2 でスライスして実部・虚部を抽出
+real = m[:, :, 0, :, :].contiguous()  # -> (B*S, C//2, Fr, T)
+imag = m[:, :, 1, :, :].contiguous()
+
+# (4) 元の (B, S, …) へ戻す
+real = real.view(B, S, -1, Fr, T)
+imag = imag.view(B, S, -1, Fr, T)
