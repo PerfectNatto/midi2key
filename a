@@ -1,12 +1,40 @@
-# 1) 先頭の B をただちに除去
-m = m.squeeze(0)                 # (S, C, Fr, T)   ← 4 次元になった
+#include <ncnn/net.h>
+#include <android/asset_manager_jni.h>
 
-# 2) 実部+虚部をチャンネルに畳み込み
-m = m.view(S, C // 2 * 2, Fr, T) # C が 2 の倍数前提ならそのまま
+static ncnn::Net net;
 
-# 3) 実・虚に分割（permute や 5D view を挟まない）
-real, imag = m.chunk(2, dim=1)   # どちらも (S, C//2, Fr, T)
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_app_Native_init(JNIEnv* env, jobject thiz, jobject assetMgr)
+{
+    ncnn::create_gpu_instance();                 // Vulkan デバイス列挙
+    net.opt.use_vulkan_compute = true;           // ★GPU を使う
+    net.opt.use_fp16_packed   = true;            // 端末が対応すれば fp16
+    AAssetManager* mgr = AAssetManager_fromJava(env, assetMgr);
+    int ret1 = net.load_param(mgr, "model.param");
+    int ret2 = net.load_model(mgr, "model.bin");
+    return (ret1 == 0 && ret2 == 0);
+}
 
-# 4) どうしても B 次元が必要なら最後に復元
-real = real.unsqueeze(0)         # (1, S, C//2, Fr, T)
-imag = imag.unsqueeze(0)
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_example_app_Native_forward(JNIEnv* env, jobject thiz, jfloatArray buf,
+                                    jint w, jint h)
+{
+    // 入力を ncnn::Mat に詰める
+    jfloat* ptr = env->GetFloatArrayElements(buf, 0);
+    ncnn::Mat in = ncnn::Mat::from_pixels(ptr, ncnn::Mat::PIXEL_RGB, w, h);
+    env->ReleaseFloatArrayElements(buf, ptr, 0);
+
+    ncnn::Extractor ex = net.create_extractor();
+    ex.input("data", in);
+
+    ncnn::Mat out;
+    ex.extract("prob", out);
+
+    // out を Java に返すなど
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_app_Native_release(JNIEnv*, jobject)
+{
+    net.clear();
+    ncnn::destro
