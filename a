@@ -1,40 +1,17 @@
-#include <ncnn/net.h>
-#include <android/asset_manager_jni.h>
+std::vector<float> stereoPlanar(2 * 44100);
 
-static ncnn::Net net;
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_app_Native_init(JNIEnv* env, jobject thiz, jobject assetMgr)
+// インターリーブ → 平面(ch-first) 変換
+for (int i = 0; i < 44100; i++)
 {
-    ncnn::create_gpu_instance();                 // Vulkan デバイス列挙
-    net.opt.use_vulkan_compute = true;           // ★GPU を使う
-    net.opt.use_fp16_packed   = true;            // 端末が対応すれば fp16
-    AAssetManager* mgr = AAssetManager_fromJava(env, assetMgr);
-    int ret1 = net.load_param(mgr, "model.param");
-    int ret2 = net.load_model(mgr, "model.bin");
-    return (ret1 == 0 && ret2 == 0);
+    stereoPlanar[i              ] = stereoInterleaved[2 * i    ]; // L
+    stereoPlanar[i + 44100      ] = stereoInterleaved[2 * i + 1]; // R
 }
 
-extern "C" JNIEXPORT jfloatArray JNICALL
-Java_com_example_app_Native_forward(JNIEnv* env, jobject thiz, jfloatArray buf,
-                                    jint w, jint h)
-{
-    // 入力を ncnn::Mat に詰める
-    jfloat* ptr = env->GetFloatArrayElements(buf, 0);
-    ncnn::Mat in = ncnn::Mat::from_pixels(ptr, ncnn::Mat::PIXEL_RGB, w, h);
-    env->ReleaseFloatArrayElements(buf, ptr, 0);
+// ncnn::Mat 生成（w, h, c の順）
+ncnn::Mat in(44100, 1, 2);             // dims = 3
+memcpy(in.channel(0), &stereoPlanar[0],       44100 * sizeof(float));
+memcpy(in.channel(1), &stereoPlanar[44100],   44100 * sizeof(float));
 
-    ncnn::Extractor ex = net.create_extractor();
-    ex.input("data", in);
-
-    ncnn::Mat out;
-    ex.extract("prob", out);
-
-    // out を Java に返すなど
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_example_app_Native_release(JNIEnv*, jobject)
-{
-    net.clear();
-    ncnn::destro
+// 推論
+ncnn::Extractor ex = net.create_extractor();
+ex.input("audio", in);              
