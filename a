@@ -1,17 +1,11 @@
-std::vector<float> stereoPlanar(2 * 44100);
+int gpu_count = ncnn::get_gpu_count();
+    LOGI("GPU count = %d", gpu_count);
 
-// インターリーブ → 平面(ch-first) 変換
-for (int i = 0; i < 44100; i++)
-{
-    stereoPlanar[i              ] = stereoInterleaved[2 * i    ]; // L
-    stereoPlanar[i + 44100      ] = stereoInterleaved[2 * i + 1]; // R
-}
-
-// ncnn::Mat 生成（w, h, c の順）
-ncnn::Mat in(44100, 1, 2);             // dims = 3
-memcpy(in.channel(0), &stereoPlanar[0],       44100 * sizeof(float));
-memcpy(in.channel(1), &stereoPlanar[44100],   44100 * sizeof(float));
-
-// 推論
-ncnn::Extractor ex = net.create_extractor();
-ex.input("audio", in);              
+    for (int i = 0; i < gpu_count; i++)
+    {
+        const ncnn::GpuInfo& gi = ncnn::get_gpu_info(i);
+        LOGI("gpu[%d] name = %s",                 i, gi.device_name());
+        LOGI("          type = %d  (0:other 1:integrated 2:discrete)", gi.type());
+        LOGI("          vram = %d MB",            gi.memory_size / (1024*1024));
+        LOGI("          compute capability = %d", gi.compute_score);
+    }
